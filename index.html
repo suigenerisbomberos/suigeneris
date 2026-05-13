@@ -1,0 +1,1322 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SUI GENERIS — Oposiciones a Bombero</title>
+<meta name="theme-color" content="#0d0d14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SUI GENERIS">
+<link rel="manifest" href="data:application/json,%7B%22name%22%3A%22SUI%20GENERIS%22%2C%22short_name%22%3A%22SuiGeneris%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%230d0d14%22%2C%22theme_color%22%3A%22%230d0d14%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22https%3A%2F%2Fplacehold.co%2F192x192%2Ff0c040%2F111111%3Ftext%3DSG%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fpng%22%7D%5D%7D">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, increment, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBG9FlTRP-ZfzFVHBUDJZNf5XV9Cf80l_o",
+  authDomain: "suigeneris-66867.firebaseapp.com",
+  projectId: "suigeneris-66867",
+  storageBucket: "suigeneris-66867.firebasestorage.app",
+  messagingSenderId: "495869347021",
+  appId: "1:495869347021:web:d603c9fade03a716d4d584"
+};
+
+// ══════ ADMINISTRADORES ══════
+const ADMIN_EMAILS = [
+  "josecarlos099@hotmail.com",
+  "miguelnl83@gmail.com"
+];
+// ════════════════════════════
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let currentUser = null;
+let isAdmin = false;
+let modoVistaPrevia = false;
+let bloques = [], temas = [], preguntas = [], alumnoData = null;
+let tiempoInicioPreg = null;
+let tiemposPorPregunta = {};
+let notasPreguntas = {};
+let modoEstudio = true; // true=estudio, false=examen
+let testActivo = null, respuestasTest = {}, preguntasMarcadas = new Set();
+let testFinalizado = false, testInicio = null, testTimer = null, testTiempoLimite = null;
+
+const $ = id => document.getElementById(id);
+const showScreen = name => {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelector(`.screen[data-screen="${name}"]`)?.classList.add('active');
+};
+
+const LOGROS = [
+  { id: 'primer_test', nombre: '🎯 Primer paso', desc: 'Completa tu primer test', check: a => (a.estadisticas?.testsRealizados||0)>=1 },
+  { id: 'diez_tests', nombre: '🔥 En racha', desc: 'Completa 10 tests', check: a => (a.estadisticas?.testsRealizados||0)>=10 },
+  { id: 'cincuenta_tests', nombre: '💯 Veterano', desc: 'Completa 50 tests', check: a => (a.estadisticas?.testsRealizados||0)>=50 },
+  { id: 'cien_tests', nombre: '👑 Maestro', desc: 'Completa 100 tests', check: a => (a.estadisticas?.testsRealizados||0)>=100 },
+  { id: 'racha_3', nombre: '📅 Constancia', desc: 'Estudia 3 días seguidos', check: a => (a.rachaActual||0)>=3 },
+  { id: 'racha_7', nombre: '🗓️ Una semana', desc: 'Estudia 7 días seguidos', check: a => (a.rachaActual||0)>=7 },
+  { id: 'racha_30', nombre: '🏆 Disciplina', desc: 'Estudia 30 días seguidos', check: a => (a.rachaActual||0)>=30 },
+  { id: 'aciertos_70', nombre: '🎓 Aprobado', desc: 'Supera el 70% de aciertos globales', check: a => { const e=a.estadisticas; return e?.totalPreguntas>=50&&(e.totalAciertos/e.totalPreguntas)>=0.7 } },
+  { id: 'aciertos_85', nombre: '🌟 Excelente', desc: 'Supera el 85% de aciertos globales', check: a => { const e=a.estadisticas; return e?.totalPreguntas>=50&&(e.totalAciertos/e.totalPreguntas)>=0.85 } },
+  { id: 'simulacro', nombre: '⏱️ Bajo presión', desc: 'Completa un simulacro cronometrado', check: a => (a.simulacrosRealizados||0)>=1 },
+];
+
+// ─── Auth ────────────────────────────────────────────────────
+onAuthStateChanged(auth, async user => {
+  if (user) {
+    currentUser = user;
+    isAdmin = ADMIN_EMAILS.includes(user.email);
+    if (isAdmin && !modoVistaPrevia) {
+      showScreen('admin');
+      await cargarAdmin();
+    } else {
+      // ─── Control de dispositivos (max 3) ───────────────────
+      if (!isAdmin) {
+        const alumnoSnap = await getDoc(doc(db, 'alumnos', user.uid));
+        if (!alumnoSnap.exists()) { showScreen('auth'); return; }
+        const aData = alumnoSnap.data();
+        if (aData.activado === false) { showScreen('pendiente'); $('pendiente-nombre').textContent = user.displayName || user.email; return; }
+        const deviceId = getDeviceId();
+        const dispositivos = aData.dispositivos || [];
+        if (!dispositivos.includes(deviceId)) {
+          if (dispositivos.length >= 3) {
+            await signOut(auth);
+            showScreen('auth');
+            showError('auth-error', '⚠️ Límite de 3 dispositivos alcanzado. Contacta con la academia.');
+            return;
+          }
+          await updateDoc(doc(db,'alumnos',user.uid), { dispositivos: [...dispositivos, deviceId] });
+        }
+      }
+
+      showScreen('alumno');
+      await cargarAlumno();
+    }
+  } else {
+    currentUser = null; isAdmin = false; modoVistaPrevia = false; alumnoData = null;
+    showScreen('auth');
+  }
+});
+
+window.registrarse = async () => {
+  const nombre = $('reg-nombre').value.trim();
+  const email = $('reg-email').value.trim();
+  const pass = $('reg-pass').value;
+  if (!nombre || !email || !pass) return showError('auth-error', 'Rellena todos los campos');
+  if (pass.length < 6) return showError('auth-error', 'Contraseña mínima: 6 caracteres');
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await updateProfile(cred.user, { displayName: nombre });
+    // Los alumnos se crean con activado: false — esperan aprobación del admin
+    const esAdmin = ADMIN_EMAILS.includes(email);
+    await setDoc(doc(db, 'alumnos', cred.user.uid), {
+      nombre, email,
+      activado: esAdmin ? true : false,
+      fechaRegistro: serverTimestamp(),
+      ultimoAcceso: new Date().toISOString().split('T')[0],
+      rachaActual: 1, rachaMaxima: 1,
+      simulacrosRealizados: 0, logros: [],
+      estadisticas: { testsRealizados: 0, totalPreguntas: 0, totalAciertos: 0, puntos: 0 }
+    });
+  } catch (e) { showError('auth-error', tradError(e.code)); }
+};
+
+window.loginAlumno = async () => {
+  const email = $('login-email').value.trim();
+  const pass = $('login-pass').value;
+  if (!email || !pass) return showError('auth-error', 'Introduce email y contraseña');
+  try { await signInWithEmailAndPassword(auth, email, pass); }
+  catch (e) { showError('auth-error', tradError(e.code)); }
+};
+
+window.recuperarPassword = async () => {
+  const email = $('login-email').value.trim();
+  if (!email) return showError('auth-error', 'Escribe tu email primero');
+  try {
+    await sendPasswordResetEmail(auth, email);
+    const el = $('auth-error');
+    el.textContent = '✉️ Email de recuperación enviado';
+    el.style.display = 'block'; el.style.background = 'rgba(74,222,128,0.15)';
+    el.style.color = '#4ade80'; el.style.borderColor = 'rgba(74,222,128,0.3)';
+  } catch (e) { showError('auth-error', tradError(e.code)); }
+};
+
+window.cerrarSesion = async () => {
+  modoVistaPrevia = false;
+  await signOut(auth);
+};
+
+window.toggleAuthForm = () => {
+  const r = $('form-registro'), l = $('form-login');
+  if (r.style.display === 'none') { r.style.display = ''; l.style.display = 'none'; }
+  else { r.style.display = 'none'; l.style.display = ''; }
+};
+
+
+function getDeviceId() {
+  let id = localStorage.getItem('sg_device_id');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).substr(2,9) + '_' + Date.now().toString(36);
+    localStorage.setItem('sg_device_id', id);
+  }
+  return id;
+}
+function showError(id, msg) {
+  const el = $(id);
+  if (el) {
+    el.textContent = msg; el.style.display = 'block';
+    setTimeout(() => { el.style.display='none'; el.style.background=''; el.style.color=''; el.style.borderColor=''; }, 5000);
+  }
+}
+
+function tradError(code) {
+  const map = {
+    'auth/email-already-in-use': 'Ese email ya está registrado',
+    'auth/invalid-email': 'Email no válido',
+    'auth/wrong-password': 'Contraseña incorrecta',
+    'auth/user-not-found': 'No existe cuenta con ese email',
+    'auth/too-many-requests': 'Demasiados intentos. Espera un momento',
+    'auth/invalid-credential': 'Email o contraseña incorrectos',
+    'auth/weak-password': 'Contraseña demasiado débil',
+  };
+  return map[code] || 'Error. Inténtalo de nuevo.';
+}
+
+// ─── Vista previa alumno (desde admin) ───────────────────────
+window.activarVistaPrevia = async () => {
+  modoVistaPrevia = true;
+  // Crear datos temporales de admin como si fuera alumno
+  alumnoData = {
+    id: currentUser.uid,
+    nombre: 'Vista Previa (Admin)',
+    estadisticas: { testsRealizados: 0, totalPreguntas: 0, totalAciertos: 0, puntos: 0 },
+    rachaActual: 7, rachaMaxima: 7, logros: ['primer_test', 'racha_3', 'racha_7'],
+    simulacrosRealizados: 0
+  };
+  showScreen('alumno');
+  await cargarBloques(); await cargarTemas(); await cargarTodasPreguntas();
+  renderInicio(); renderTemas(); renderProgreso();
+  showAlumnoTab('inicio');
+  mostrarToast('👁️ Modo Vista Previa', 'Estás viendo la plataforma como un alumno');
+};
+
+window.salirVistaPrevia = () => {
+  modoVistaPrevia = false;
+  showScreen('admin');
+  cargarAdmin();
+};
+
+// ─── Datos ────────────────────────────────────────────────────
+async function cargarBloques() {
+  try { const s = await getDocs(query(collection(db,'bloques'),orderBy('orden'))); bloques = s.docs.map(d=>({id:d.id,...d.data()})); } catch(e) { bloques=[]; }
+}
+async function cargarTemas() {
+  try { const s = await getDocs(query(collection(db,'temas'),orderBy('orden'))); temas = s.docs.map(d=>({id:d.id,...d.data()})); } catch(e) { temas=[]; }
+}
+async function cargarTodasPreguntas() {
+  preguntas = [];
+  for (const t of temas) {
+    try { const s = await getDocs(collection(db,'temas',t.id,'preguntas')); preguntas.push(...s.docs.map(d=>({id:d.id,temaId:t.id,...d.data()}))); } catch(e) {}
+  }
+}
+
+// ─── Alumno ───────────────────────────────────────────────────
+async function cargarAlumno() {
+  $('alumno-nombre').textContent = currentUser.displayName || 'Alumno';
+  // Mostrar botón de salir vista previa si corresponde
+  $('btn-salir-preview').style.display = modoVistaPrevia ? 'flex' : 'none';
+  await cargarBloques(); await cargarTemas(); await cargarTodasPreguntas();
+  if (!modoVistaPrevia) {
+    await cargarAlumnoData();
+    await actualizarRacha();
+    await comprobarLogros();
+  }
+  renderInicio(); renderTemas(); renderProgreso();
+  showAlumnoTab('inicio');
+}
+
+async function cargarAlumnoData() {
+  const s = await getDoc(doc(db,'alumnos',currentUser.uid));
+  if (s.exists()) alumnoData = { id: s.id, ...s.data() };
+}
+
+async function actualizarRacha() {
+  if (!alumnoData) return;
+  const hoy = new Date().toISOString().split('T')[0];
+  const ayer = new Date(Date.now()-86400000).toISOString().split('T')[0];
+  const ultimo = alumnoData.ultimoAcceso;
+  if (ultimo === hoy) return;
+  let nuevaRacha = 1;
+  if (ultimo === ayer) nuevaRacha = (alumnoData.rachaActual||0)+1;
+  const rachaMax = Math.max(alumnoData.rachaMaxima||0, nuevaRacha);
+  await updateDoc(doc(db,'alumnos',currentUser.uid), { ultimoAcceso:hoy, rachaActual:nuevaRacha, rachaMaxima:rachaMax });
+  alumnoData.ultimoAcceso=hoy; alumnoData.rachaActual=nuevaRacha; alumnoData.rachaMaxima=rachaMax;
+}
+
+async function comprobarLogros() {
+  if (!alumnoData || modoVistaPrevia) return;
+  const desbloqueados = alumnoData.logros||[];
+  const nuevos = LOGROS.filter(l => !desbloqueados.includes(l.id) && l.check(alumnoData));
+  if (nuevos.length) {
+    const todos = [...desbloqueados, ...nuevos.map(l=>l.id)];
+    await updateDoc(doc(db,'alumnos',currentUser.uid), { logros: todos });
+    alumnoData.logros = todos;
+    nuevos.forEach(l => mostrarToast('🏆 ¡Logro desbloqueado!', l.nombre));
+  }
+}
+
+function mostrarToast(titulo, texto) {
+  const div = document.createElement('div');
+  div.className = 'toast';
+  div.innerHTML = `<div style="font-weight:700">${titulo}</div><div style="font-size:13px;color:#bbb">${texto}</div>`;
+  document.body.appendChild(div);
+  setTimeout(() => div.classList.add('show'), 50);
+  setTimeout(() => { div.classList.remove('show'); setTimeout(() => div.remove(), 400); }, 4000);
+}
+
+function renderInicio() {
+  const stats = alumnoData?.estadisticas||{};
+  $('stat-tests').textContent = stats.testsRealizados||0;
+  const pct = stats.totalPreguntas>0 ? Math.round((stats.totalAciertos/stats.totalPreguntas)*100) : 0;
+  $('stat-aciertos').textContent = pct+'%';
+  $('stat-preguntas').textContent = stats.totalPreguntas||0;
+  $('stat-racha').textContent = (alumnoData?.rachaActual||0)+' 🔥';
+  $('stat-puntos').textContent = stats.puntos||0;
+  $('stat-logros').textContent = (alumnoData?.logros?.length||0)+'/'+LOGROS.length;
+  if (!modoVistaPrevia) cargarHistorial();
+  else { $('historial-lista').innerHTML = '<p class="empty-msg">Modo vista previa — sin historial real</p>'; }
+}
+
+async function cargarHistorial() {
+  try {
+    const s = await getDocs(query(collection(db,'alumnos',currentUser.uid,'historial'),orderBy('fecha','desc')));
+    const hist = s.docs.map(d=>d.data());
+    renderHistorial(hist.slice(0,5), 'historial-lista');
+    renderHistorial(hist, 'historial-lista-full');
+  } catch(e) { $('historial-lista').innerHTML='<p class="empty-msg">Aún no has hecho tests</p>'; }
+}
+
+function renderHistorial(hist, contId) {
+  const el = $(contId); if (!el) return;
+  if (!hist.length) { el.innerHTML='<p class="empty-msg">Aún no has hecho tests</p>'; return; }
+  el.innerHTML = hist.map(h => {
+    const pct = Math.round((h.aciertos/h.total)*100);
+    const color = pct>=70?'#4ade80':pct>=50?'#f0c040':'#f87171';
+    const fecha = h.fecha?.toDate?.()?.toLocaleDateString('es-ES')||'';
+    const tipo = h.tipo==='simulacro'?'⏱️':h.tipo==='falladas'?'🔄':h.tipo==='mixto'?'🔀':'📚';
+    return `<div class="hist-item">
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">${tipo} ${h.temaNombre}</div>
+      <div style="font-size:12px;color:#888">${fecha} · ${h.total} preguntas</div></div>
+      <div style="font-size:22px;font-weight:700;color:${color}">${pct}%</div></div>`;
+  }).join('');
+}
+
+async function renderTemas() {
+  const cont = $('bloques-container');
+  if (!bloques.length && !temas.length) { cont.innerHTML='<p class="empty-msg">El profesor aún no ha añadido temas</p>'; return; }
+  await precargarProgreso();
+  const sinBloque = temas.filter(t=>!t.bloqueId);
+  let html = '';
+  bloques.forEach(b => {
+    const ts = temas.filter(t=>t.bloqueId===b.id); if (!ts.length) return;
+    html += `<div class="bloque-section"><h3 class="bloque-titulo" style="border-left-color:${b.color||'#f0c040'}">${b.nombre}</h3><div class="temas-grid">${renderTemasCards(ts)}</div></div>`;
+  });
+  if (sinBloque.length) html += `<div class="bloque-section"><h3 class="bloque-titulo">Otros temas</h3><div class="temas-grid">${renderTemasCards(sinBloque)}</div></div>`;
+  cont.innerHTML = html;
+}
+
+function renderTemasCards(ts) {
+  return ts.map(t => {
+    const ps = preguntas.filter(p=>p.temaId===t.id);
+    const progKey = 'prog_' + t.id;
+    const progGuardado = window._progresoTemas && window._progresoTemas[t.id];
+    let progresoHTML = '';
+    if (progGuardado && progGuardado.indice > 0) {
+      const pct = Math.round((progGuardado.indice / ps.length) * 100);
+      progresoHTML = `<div class="tema-progreso">▶ Continuar — ${progGuardado.indice}/${ps.length} (${pct}%)</div>`;
+    }
+    return `<div class="tema-card" onclick="iniciarTestTema('${t.id}')">
+      <div class="tema-num">T${String(temas.findIndex(x=>x.id===t.id)+1).padStart(2,'0')}</div>
+      <div class="tema-nombre">${t.nombre}</div>
+      <div class="tema-info">${ps.length} preguntas</div>
+      ${progresoHTML}
+    </div>`;
+  }).join('');
+}
+
+// Precargar progreso de todos los temas para mostrar en tarjetas
+async function precargarProgreso() {
+  if (modoVistaPrevia) return;
+  window._progresoTemas = {};
+  for (const t of temas) {
+    const p = await cargarProgresaTema(t.id);
+    if (p) window._progresoTemas[t.id] = p;
+  }
+}
+
+function renderProgreso() {
+  const desbloqueados = alumnoData?.logros||[];
+  $('logros-grid').innerHTML = LOGROS.map(l => {
+    const got = desbloqueados.includes(l.id);
+    return `<div class="logro-card ${got?'desbloqueado':''}">
+      <div class="logro-nombre">${l.nombre}</div>
+      <div class="logro-desc">${l.desc}</div>
+      <div class="logro-estado">${got?'✓ Conseguido':'🔒 Bloqueado'}</div></div>`;
+  }).join('');
+  if (!modoVistaPrevia) { cargarAciertosTema(); cargarPreguntasMasFalladas(); }
+}
+
+
+async function cargarPreguntasMasFalladas() {
+  try {
+    const s = await getDocs(collection(db,'alumnos',currentUser.uid,'falladas'));
+    const ids = s.docs.map(d=>d.id);
+    if (!ids.length) { $('mas-falladas').innerHTML='<p class="empty-msg">Sin preguntas falladas 🎉</p>'; return; }
+    const ps = preguntas.filter(p=>ids.includes(p.id)).slice(0,10);
+    $('mas-falladas').innerHTML = ps.map((p,i)=>`
+      <div class="fallada-item">
+        <div style="font-size:13px;color:var(--red2);font-weight:700;margin-bottom:4px">✗ ${i+1}. ${p.enunciado}</div>
+        <div style="font-size:12px;color:var(--green)">✓ ${p.opciones[p.correcta]}</div>
+      </div>`).join('');
+  } catch(e) {}
+}
+async function cargarAciertosTema() {
+  try {
+    const s = await getDocs(collection(db,'alumnos',currentUser.uid,'historial'));
+    const ac = {};
+    s.docs.forEach(d => { const h=d.data(); if(!ac[h.temaId]) ac[h.temaId]={aciertos:0,total:0,nombre:h.temaNombre}; ac[h.temaId].aciertos+=h.aciertos; ac[h.temaId].total+=h.total; });
+    const arr = Object.values(ac);
+    if (!arr.length) { $('aciertos-tema').innerHTML='<p class="empty-msg">Haz algún test para ver datos por tema</p>'; return; }
+    $('aciertos-tema').innerHTML = arr.map(a => {
+      const pct = Math.round((a.aciertos/a.total)*100);
+      const color = pct>=70?'#4ade80':pct>=50?'#f0c040':'#f87171';
+      return `<div class="tema-stat-row"><div style="flex:1;font-size:14px;font-weight:500">${a.nombre}</div>
+        <div style="display:flex;align-items:center;gap:10px"><div class="bar-mini"><div class="bar-mini-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div style="font-weight:700;color:${color};min-width:42px;text-align:right">${pct}%</div></div></div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function cargarRanking() {
+  try {
+    const s = await getDocs(query(collection(db,'alumnos'),orderBy('estadisticas.puntos','desc'),limit(20)));
+    const lista = s.docs.map(d=>({id:d.id,...d.data()})).filter(a=>!ADMIN_EMAILS.includes(a.email));
+    if (!lista.length) { $('ranking-lista').innerHTML='<p class="empty-msg">Sin datos aún</p>'; return; }
+    $('ranking-lista').innerHTML = lista.map((a,i) => {
+      const pos=i+1, medal=pos===1?'🥇':pos===2?'🥈':pos===3?'🥉':pos;
+      const isYou = a.id===currentUser.uid;
+      const stats=a.estadisticas||{}, pct=stats.totalPreguntas>0?Math.round((stats.totalAciertos/stats.totalPreguntas)*100):0;
+      return `<div class="rank-item ${isYou?'tu':''}">
+        <div class="rank-pos">${medal}</div>
+        <div style="flex:1"><div style="font-weight:600;font-size:14px">${a.nombre} ${isYou?'<span style="color:var(--gold)">(Tú)</span>':''}</div>
+        <div style="font-size:12px;color:#888">${stats.testsRealizados||0} tests · ${pct}% · 🔥 ${a.rachaMaxima||0}</div></div>
+        <div style="font-weight:700;color:var(--gold);font-size:18px">${stats.puntos||0} pt</div></div>`;
+    }).join('');
+  } catch(e) { $('ranking-lista').innerHTML='<p class="empty-msg">Error al cargar</p>'; }
+}
+
+// ─── TEST ──────────────────────────────────────────────────────
+
+// Carga el progreso guardado de un tema (qué preguntas ya vio y en qué índice está)
+async function cargarProgresaTema(temaId) {
+  if (modoVistaPrevia) return null;
+  try {
+    const s = await getDoc(doc(db,'alumnos',currentUser.uid,'progreso_temas',temaId));
+    return s.exists() ? s.data() : null;
+  } catch(e) { return null; }
+}
+
+async function guardarProgresaTema(temaId, ordenIds, indice) {
+  if (modoVistaPrevia) return;
+  try {
+    await setDoc(doc(db,'alumnos',currentUser.uid,'progreso_temas',temaId), {
+      ordenIds, indice, actualizado: serverTimestamp()
+    });
+  } catch(e) {}
+}
+
+window.iniciarTestTema = async (temaId) => {
+  const tema = temas.find(t=>t.id===temaId); if (!tema) return;
+  const todasPs = preguntas.filter(p=>p.temaId===temaId);
+  if (!todasPs.length) return alert('Este tema aún no tiene preguntas');
+
+  let ordenIds = null;
+  let indiceInicio = 0;
+  const progreso = await cargarProgresaTema(temaId);
+
+  if (progreso && progreso.ordenIds && progreso.ordenIds.length === todasPs.length) {
+    // Tiene progreso guardado — retomar
+    ordenIds = progreso.ordenIds;
+    indiceInicio = progreso.indice || 0;
+    // Si ya terminó todas, reiniciar desde el principio con nuevo orden aleatorio
+    if (indiceInicio >= todasPs.length) {
+      ordenIds = todasPs.sort(()=>Math.random()-.5).map(p=>p.id);
+      indiceInicio = 0;
+    }
+  } else {
+    // Primera vez — orden aleatorio
+    ordenIds = [...todasPs].sort(()=>Math.random()-.5).map(p=>p.id);
+    indiceInicio = 0;
+  }
+
+  // Reconstruir array de preguntas en el orden guardado
+  const psOrdenadas = ordenIds.map(id=>todasPs.find(p=>p.id===id)).filter(Boolean);
+
+  testActivo = {
+    tipo:'tema', temaId, temaNombre:tema.nombre,
+    preguntas:psOrdenadas, indice:indiceInicio,
+    guardarProgreso: true
+  };
+  iniciarTestComun();
+};
+
+window.iniciarTestMezclado = () => {
+  if (!preguntas.length) return alert('No hay preguntas disponibles');
+  // Mostrar selector de temas
+  $('modal-selector-temas').style.display='flex';
+  renderSelectorTemas();
+};
+
+function renderSelectorTemas() {
+  const cont = $('selector-temas-lista');
+  cont.innerHTML = temas.map(t => {
+    const ps = preguntas.filter(p=>p.temaId===t.id);
+    if (!ps.length) return '';
+    return `<label class="selector-tema-item">
+      <input type="checkbox" value="${t.id}" checked class="selector-check">
+      <div>
+        <div style="font-weight:600;font-size:14px">${t.nombre}</div>
+        <div style="font-size:12px;color:#888">${ps.length} preguntas</div>
+      </div>
+    </label>`;
+  }).join('');
+}
+
+window.cerrarSelectorTemas = () => { $('modal-selector-temas').style.display='none'; };
+
+window.confirmarTestMixto = () => {
+  const checks = document.querySelectorAll('.selector-check:checked');
+  const temaIds = [...checks].map(c=>c.value);
+  if (!temaIds.length) return alert('Selecciona al menos un tema');
+  const ps = preguntas.filter(p=>temaIds.includes(p.temaId));
+  if (!ps.length) return alert('Los temas seleccionados no tienen preguntas');
+  const shuffled = [...ps].sort(()=>Math.random()-.5);
+  const nombresCortos = temaIds.length === temas.length ? 'Todos los temas' : `${temaIds.length} temas seleccionados`;
+  testActivo = { tipo:'mixto', temaId:'mixto', temaNombre:`Test mixto — ${nombresCortos}`, preguntas:shuffled, indice:0 };
+  $('modal-selector-temas').style.display='none';
+  iniciarTestComun();
+};
+
+window.iniciarSimulacro = () => {
+  if (preguntas.length < 10) return alert('Necesitas más preguntas para hacer un simulacro.');
+  $('modal-simulacro').style.display='flex';
+};
+
+window.confirmarSimulacro = () => {
+  const num=parseInt($('sim-numpreguntas').value), min=parseInt($('sim-minutos').value);
+  if (!num||!min) return;
+  const shuffled = [...preguntas].sort(()=>Math.random()-.5).slice(0,Math.min(num,preguntas.length));
+  testActivo = { tipo:'simulacro', temaId:'simulacro', temaNombre:`Simulacro (${shuffled.length} preguntas, ${min} min)`, preguntas:shuffled, indice:0, modoExamen:true };
+  testTiempoLimite = min*60;
+  $('modal-simulacro').style.display='none';
+  iniciarTestComun();
+};
+
+window.iniciarTestFalladas = async () => {
+  if (modoVistaPrevia) return alert('En modo vista previa no hay falladas reales');
+  try {
+    const s = await getDocs(collection(db,'alumnos',currentUser.uid,'falladas'));
+    const ids = s.docs.map(d=>d.id);
+    const ps = preguntas.filter(p=>ids.includes(p.id));
+    if (!ps.length) return alert('No tienes preguntas falladas para repasar 👏');
+    const shuffled = [...ps].sort(()=>Math.random()-.5).slice(0,Math.min(ps.length,20));
+    testActivo = { tipo:'falladas', temaId:'falladas', temaNombre:'Repaso de falladas', preguntas:shuffled, indice:0 };
+    iniciarTestComun();
+  } catch(e) { alert('Error al cargar falladas'); }
+};
+
+
+// ─── Modo estudio / examen ────────────────────────────────
+window.toggleModoEstudio = () => {
+  modoEstudio = !modoEstudio;
+  $('btn-modo').textContent = modoEstudio ? '📖 Modo estudio' : '📝 Modo examen';
+  $('btn-modo').style.background = modoEstudio ? 'rgba(74,222,128,0.15)' : 'rgba(96,165,250,0.15)';
+  $('btn-modo').style.color = modoEstudio ? 'var(--green)' : 'var(--blue)';
+  renderTest();
+};
+function iniciarTestComun() {
+  respuestasTest={}; preguntasMarcadas=new Set(); testFinalizado=false; testInicio=Date.now();
+  tiempoInicioPreg=Date.now(); tiemposPorPregunta={}; notasPreguntas={}; modoEstudio=true;
+  if (testActivo.tipo==='simulacro') iniciarTimer();
+  showAlumnoTab('test'); renderTest();
+}
+
+function iniciarTimer() {
+  let r=testTiempoLimite; $('test-timer').style.display='flex';
+  testTimer=setInterval(()=>{ r--; const m=Math.floor(r/60),s=r%60; $('test-timer').textContent=`⏱️ ${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if(r<=60) $('test-timer').style.color='#f87171'; if(r<=0){clearInterval(testTimer);finalizarTest();}},1000);
+}
+function pararTimer() { if(testTimer){clearInterval(testTimer);testTimer=null;} $('test-timer').style.display='none'; }
+
+function renderTest() {
+  if (!testActivo) { $('no-test').style.display='block'; $('test-activo').style.display='none'; return; }
+  $('no-test').style.display='none'; $('test-activo').style.display='block';
+  const {preguntas:ps,indice,modoExamen}=testActivo, p=ps[indice], total=ps.length;
+  $('test-titulo').textContent=testActivo.temaNombre;
+  $('test-prog-texto').textContent='';
+  $('test-prog-bar').style.width=`${((indice+1)/total)*100}%`;
+  $('test-pregunta').textContent=p.enunciado; const numEl=$('test-pregunta-num'); if(numEl) numEl.textContent='';
+  const respondida=respuestasTest[p.id]!==undefined, verRes=testFinalizado||(respondida&&modoEstudio&&!modoExamen);
+  $('test-opciones').innerHTML=p.opciones.map((op,i)=>{
+    let cls='opcion-btn';
+    if(verRes){if(i===p.correcta)cls+=' correcta'; else if(respuestasTest[p.id]===i&&i!==p.correcta)cls+=' incorrecta';}
+    if(respuestasTest[p.id]===i) cls+=' seleccionada';
+    const dis=(testFinalizado||(respondida&&!modoExamen))?'disabled':'';
+    return `<button class="${cls}" onclick="responder(${i})" ${dis}><span class="opcion-letra">${['A','B','C','D'][i]}</span><span>${op}</span></button>`;
+  }).join('');
+  const exp=$('test-explicacion');
+  if(verRes&&p.explicacion){exp.style.display='block';exp.innerHTML=`<strong>💡 Explicación:</strong> ${p.explicacion}`;}else exp.style.display='none';
+  const marcado=preguntasMarcadas.has(p.id);
+  $('btn-marcar').textContent=marcado?'🚩 Desmarcar':'🚩 Marcar para revisar';
+  $('btn-marcar').classList.toggle('marcada',marcado);
+  $('btn-anterior').style.display=indice>0?'':'none';
+  $('btn-siguiente').style.display=indice<total-1?'':'none';
+  $('btn-finalizar').style.display=(indice===total-1&&!testFinalizado)?'':'none';
+  // Tiempo acumulado en esta pregunta
+  const tiempoAcum = tiemposPorPregunta[p.id] || 0;
+  $('test-tiempo-preg').textContent = tiempoAcum > 0 ? `⏱ ${tiempoAcum}s` : '';
+  // Nota de la pregunta
+  const notaGuardada = notasPreguntas[p.id] || '';
+  $('nota-area').innerHTML = `<div style="margin-top:10px"><textarea id="nota-input-${p.id}" placeholder="📝 Tu nota para esta pregunta..." style="width:100%;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-size:13px;font-family:Outfit,sans-serif;resize:vertical;min-height:60px;outline:none" onblur="guardarNota('${p.id}')">${notaGuardada}</textarea></div>`;
+  // Modo toggle
+  $('btn-modo').textContent = modoEstudio ? '📖 Modo estudio' : '📝 Modo examen';
+  $('btn-modo').style.background = modoEstudio ? 'rgba(74,222,128,0.15)' : 'rgba(96,165,250,0.15)';
+  $('btn-modo').style.color = modoEstudio ? 'var(--green)' : 'var(--blue)';
+
+}
+
+window.responder=(i)=>{if(!testActivo||testFinalizado)return;const p=testActivo.preguntas[testActivo.indice];if(respuestasTest[p.id]!==undefined&&!testActivo.modoExamen)return;respuestasTest[p.id]=i;renderTest();};
+window.siguiente=()=>{
+  if(testActivo&&testActivo.indice<testActivo.preguntas.length-1){
+    const p=testActivo.preguntas[testActivo.indice]; if(tiempoInicioPreg) tiemposPorPregunta[p.id]=(tiemposPorPregunta[p.id]||0)+Math.round((Date.now()-tiempoInicioPreg)/1000); tiempoInicioPreg=Date.now();
+    testActivo.indice++;
+    renderTest();
+    if(testActivo.guardarProgreso) guardarProgresaTema(testActivo.temaId, testActivo.preguntas.map(p=>p.id), testActivo.indice);
+  }
+};
+window.anterior=()=>{if(testActivo&&testActivo.indice>0){const p=testActivo.preguntas[testActivo.indice]; if(tiempoInicioPreg) tiemposPorPregunta[p.id]=(tiemposPorPregunta[p.id]||0)+Math.round((Date.now()-tiempoInicioPreg)/1000); tiempoInicioPreg=Date.now(); testActivo.indice--;renderTest();}};
+window.irPregunta=(i)=>{
+  if(testActivo){
+    testActivo.indice=i; renderTest();
+    if(testActivo.guardarProgreso) guardarProgresaTema(testActivo.temaId, testActivo.preguntas.map(p=>p.id), i);
+  }
+};
+
+window.guardarNota = async (pregId) => {
+  const nota = $('nota-input-'+pregId)?.value || '';
+  notasPreguntas[pregId] = nota;
+  if (!modoVistaPrevia) {
+    await setDoc(doc(db,'alumnos',currentUser.uid,'notas',pregId), { texto: nota, fecha: serverTimestamp() });
+    mostrarToast('📝 Nota guardada','');
+  }
+};
+
+async function cargarNotasPregunta(pregId) {
+  if (modoVistaPrevia) return '';
+  try {
+    const s = await getDoc(doc(db,'alumnos',currentUser.uid,'notas',pregId));
+    return s.exists() ? s.data().texto : '';
+  } catch(e) { return ''; }
+}
+window.toggleMarcar=()=>{const p=testActivo.preguntas[testActivo.indice];if(preguntasMarcadas.has(p.id))preguntasMarcadas.delete(p.id);else preguntasMarcadas.add(p.id);renderTest();};
+
+window.finalizarTest = async () => {
+  if (!testActivo||testFinalizado) return;
+  const sinR=testActivo.preguntas.filter(p=>respuestasTest[p.id]===undefined).length;
+  if(sinR>0&&!confirm(`Te quedan ${sinR} preguntas sin responder. ¿Finalizar?`)) return;
+  pararTimer(); testFinalizado=true;
+  const ps=testActivo.preguntas, aciertos=ps.filter(p=>respuestasTest[p.id]===p.correcta).length;
+  const total=ps.length, pct=Math.round((aciertos/total)*100);
+  const puntos=aciertos*10+(testActivo.tipo==='simulacro'?50:0);
+
+  if (!modoVistaPrevia) {
+    await addDoc(collection(db,'alumnos',currentUser.uid,'historial'),{
+      temaId:testActivo.temaId,temaNombre:testActivo.temaNombre,tipo:testActivo.tipo,
+      aciertos,total,porcentaje:pct,tiempoSegundos:Math.round((Date.now()-testInicio)/1000),fecha:serverTimestamp()
+    });
+    const updates={'estadisticas.testsRealizados':increment(1),'estadisticas.totalPreguntas':increment(total),'estadisticas.totalAciertos':increment(aciertos),'estadisticas.puntos':increment(puntos)};
+    if(testActivo.tipo==='simulacro') updates.simulacrosRealizados=increment(1);
+    await updateDoc(doc(db,'alumnos',currentUser.uid),updates);
+    for(const p of ps){
+      if(respuestasTest[p.id]!==undefined&&respuestasTest[p.id]!==p.correcta) await setDoc(doc(db,'alumnos',currentUser.uid,'falladas',p.id),{temaId:p.temaId,fecha:serverTimestamp()});
+      else if(respuestasTest[p.id]===p.correcta) try{await deleteDoc(doc(db,'alumnos',currentUser.uid,'falladas',p.id));}catch(e){}
+    }
+    // Si era test por tema, resetear progreso (reinicia desde 0 la próxima vez con nuevo orden)
+    if(testActivo.guardarProgreso) {
+      const nuevaOrden = [...testActivo.preguntas].sort(()=>Math.random()-.5).map(p=>p.id);
+      await guardarProgresaTema(testActivo.temaId, nuevaOrden, 0);
+    }
+    await cargarAlumnoData(); await comprobarLogros();
+  }
+
+  $('resultado-titulo').textContent=pct>=70?'¡Buen trabajo! 🔥':pct>=50?'Puedes mejorar 💪':'A seguir practicando 📚';
+  $('resultado-pct').textContent=pct+'%';
+  $('resultado-pct').style.color=pct>=70?'#4ade80':pct>=50?'#f0c040':'#f87171';
+  $('resultado-detalle').innerHTML=`<strong>${aciertos}</strong> correctas de <strong>${total}</strong><br>+${puntos} puntos`;
+  $('pantalla-resultado').style.display='flex';
+  renderTest();
+};
+
+window.verRespuestas=()=>{$('pantalla-resultado').style.display='none';testActivo.indice=0;renderTest();};
+window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;pararTimer();showAlumnoTab('temas');renderInicio();};
+
+window.showAlumnoTab=(tab)=>{
+  document.querySelectorAll('.alumno-tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.alumno-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelector(`.alumno-tab-btn[data-tab="${tab}"]`)?.classList.add('active');
+  document.querySelector(`.alumno-tab[data-tab="${tab}"]`)?.classList.add('active');
+  if(tab==='inicio') renderInicio();
+  if(tab==='progreso') renderProgreso();
+  if(tab==='ranking') cargarRanking();
+  if(tab==='test') renderTest();
+};
+
+// ─── ADMIN ─────────────────────────────────────────────────────
+async function cargarAdmin() {
+  $('admin-email').textContent = currentUser.email;
+  await cargarBloques(); await cargarTemas(); await cargarTodasPreguntas();
+  renderAdminBloques(); renderAdminTemas(); await renderAdminEstadisticas();
+}
+
+async function renderAdminEstadisticas() {
+  try { const s=await getDocs(collection(db,'alumnos')); $('admin-stat-alumnos').textContent=s.size; } catch(e){ $('admin-stat-alumnos').textContent='0'; }
+  $('admin-stat-temas').textContent=temas.length;
+  $('admin-stat-preguntas').textContent=preguntas.length;
+  $('admin-stat-bloques').textContent=bloques.length;
+}
+
+function renderAdminBloques() {
+  $('admin-bloques-lista').innerHTML = bloques.length ? bloques.map(b=>`
+    <div class="admin-tema-item" style="border-left:3px solid ${b.color||'#f0c040'}">
+      <div><div style="font-weight:600">${b.nombre}</div><div style="font-size:12px;color:#888">${temas.filter(t=>t.bloqueId===b.id).length} temas</div></div>
+      <button class="btn-sm btn-danger" onclick="eliminarBloque('${b.id}')">🗑️</button></div>`).join('')
+    : '<p class="empty-msg">Sin bloques creados.</p>';
+  const sel=$('nuevo-tema-bloque');
+  sel.innerHTML='<option value="">Sin bloque</option>'+bloques.map(b=>`<option value="${b.id}">${b.nombre}</option>`).join('');
+}
+
+window.crearBloque=async()=>{ const nombre=$('nuevo-bloque-nombre').value.trim(),color=$('nuevo-bloque-color').value; if(!nombre)return; await addDoc(collection(db,'bloques'),{nombre,color,orden:bloques.length+1,creadoEn:serverTimestamp()}); $('nuevo-bloque-nombre').value=''; await cargarBloques(); renderAdminBloques(); await renderAdminEstadisticas(); };
+window.eliminarBloque=async(id)=>{ if(!confirm('¿Eliminar este bloque?'))return; const ts=temas.filter(t=>t.bloqueId===id); for(const t of ts)await updateDoc(doc(db,'temas',t.id),{bloqueId:''}); await deleteDoc(doc(db,'bloques',id)); await cargarBloques();await cargarTemas(); renderAdminBloques();renderAdminTemas(); };
+
+function renderAdminTemas() {
+  $('admin-temas-lista').innerHTML = temas.length ? temas.map(t=>{
+    const ps=preguntas.filter(p=>p.temaId===t.id), bloque=bloques.find(b=>b.id===t.bloqueId);
+    return `<div class="admin-tema-item">
+      <div style="flex:1"><div style="font-weight:600">${t.nombre}</div>
+      <div style="font-size:12px;color:#888">${bloque?`📁 ${bloque.nombre} · `:''}${ps.length} preguntas</div></div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn-sm btn-primary" onclick="abrirGestorPreguntas('${t.id}')">✏️ Preguntas</button>
+        <button class="btn-sm btn-secondary" onclick="editarTema('${t.id}')">📁 Mover</button>
+        <button class="btn-sm btn-danger" onclick="eliminarTema('${t.id}')">🗑️</button></div></div>`;
+  }).join('') : '<p class="empty-msg">No hay temas.</p>';
+}
+
+window.crearTema=async()=>{ const nombre=$('nuevo-tema-nombre').value.trim(),bloqueId=$('nuevo-tema-bloque').value; if(!nombre)return; await addDoc(collection(db,'temas'),{nombre,bloqueId,orden:temas.length+1,creadoEn:serverTimestamp()}); $('nuevo-tema-nombre').value=''; await cargarTemas();await cargarTodasPreguntas(); renderAdminTemas();await renderAdminEstadisticas(); };
+window.editarTema=async(id)=>{ const t=temas.find(x=>x.id===id); const opts=bloques.map(b=>`${b.id===t.bloqueId?'✓ ':''}${b.nombre}`).join('\n'); const nb=prompt(`Mover "${t.nombre}" a qué bloque?\nEscribe el NOMBRE o "ninguno":\n\n${opts||'(sin bloques)'}`); if(nb===null)return; let bloqueId=''; if(nb.toLowerCase()!=='ninguno'){const b=bloques.find(b=>b.nombre.toLowerCase()===nb.toLowerCase()); if(!b)return alert('No existe ese bloque'); bloqueId=b.id;} await updateDoc(doc(db,'temas',id),{bloqueId}); await cargarTemas();renderAdminTemas(); };
+window.eliminarTema=async(id)=>{ if(!confirm('¿Eliminar este tema y todas sus preguntas?'))return; const ps=await getDocs(collection(db,'temas',id,'preguntas')); for(const d of ps.docs)await deleteDoc(d.ref); await deleteDoc(doc(db,'temas',id)); await cargarTemas();await cargarTodasPreguntas(); renderAdminTemas();await renderAdminEstadisticas(); };
+
+// ─── Gestor preguntas ─────────────────────────────────────────
+let temaEditar=null;
+window.abrirGestorPreguntas=(id)=>{ temaEditar=temas.find(t=>t.id===id); if(!temaEditar)return; $('modal-tema-nombre').textContent=temaEditar.nombre; renderPreguntasModal(); limpiarFormPregunta(); $('modal-preguntas').style.display='flex'; };
+window.cerrarModal=()=>{ $('modal-preguntas').style.display='none'; temaEditar=null; };
+window.cerrarModalSim=()=>{ $('modal-simulacro').style.display='none'; };
+
+function renderPreguntasModal() {
+  const ps=preguntas.filter(p=>p.temaId===temaEditar.id);
+  $('modal-lista-preguntas').innerHTML=ps.length?ps.map((p,i)=>`
+    <div class="pregunta-item"><div style="flex:1">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px">${i+1}. ${p.enunciado}</div>
+      <div style="font-size:12px;color:#4ade80">✓ ${p.opciones[p.correcta]}</div></div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <button class="btn-sm btn-primary" onclick="editarPregunta('${p.id}')">✏️</button>
+        <button class="btn-sm btn-danger" onclick="eliminarPregunta('${p.id}')">🗑️</button></div></div>`).join('')
+    : '<p class="empty-msg">No hay preguntas en este tema</p>';
+}
+
+window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim(); const opciones=['preg-op0','preg-op1','preg-op2','preg-op3'].map(id=>$(id).value.trim()); const correcta=parseInt($('preg-correcta').value); const explicacion=$('preg-explicacion').value.trim(); if(!enunciado||opciones.some(o=>!o))return alert('Rellena enunciado y las 4 opciones'); if(isNaN(correcta))return alert('Selecciona la respuesta correcta'); const data={enunciado,opciones,correcta,explicacion,creadaEn:serverTimestamp()}; const editId=$('preg-edit-id').value; if(editId)await updateDoc(doc(db,'temas',temaEditar.id,'preguntas',editId),data); else await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),data); limpiarFormPregunta(); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
+window.editarPregunta=(id)=>{ const p=preguntas.find(pr=>pr.id===id); if(!p)return; $('preg-edit-id').value=p.id; $('preg-enunciado').value=p.enunciado; p.opciones.forEach((op,i)=>$(`preg-op${i}`).value=op); $('preg-correcta').value=p.correcta; $('preg-explicacion').value=p.explicacion||''; $('btn-guardar-preg').textContent='💾 Actualizar pregunta'; $('preg-enunciado').focus(); };
+window.eliminarPregunta=async(id)=>{ if(!confirm('¿Eliminar esta pregunta?'))return; await deleteDoc(doc(db,'temas',temaEditar.id,'preguntas',id)); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
+function limpiarFormPregunta(){ $('preg-edit-id').value=''; $('preg-enunciado').value=''; ['preg-op0','preg-op1','preg-op2','preg-op3'].forEach(id=>$(id).value=''); $('preg-correcta').value=''; $('preg-explicacion').value=''; $('btn-guardar-preg').textContent='➕ Añadir pregunta'; }
+
+// ─── Admin Alumnos con ACTIVACIÓN ─────────────────────────────
+window.cargarAdminAlumnos = async () => {
+  try {
+    const snap = await getDocs(collection(db,'alumnos'));
+    const lista = snap.docs.map(d=>({id:d.id,...d.data()})).filter(a=>!ADMIN_EMAILS.includes(a.email));
+    if (!lista.length) { $('admin-alumnos-lista').innerHTML='<p class="empty-msg">Sin alumnos registrados todavía</p>'; return; }
+
+    // Separar activados y pendientes
+    const pendientes = lista.filter(a => a.activado === false);
+    const activados = lista.filter(a => a.activado !== false);
+
+    let html = '';
+
+    if (pendientes.length) {
+      html += `<div style="background:rgba(240,192,64,0.1);border:1px solid rgba(240,192,64,0.3);border-radius:10px;padding:14px;margin-bottom:16px">
+        <div style="font-weight:700;color:#f0c040;margin-bottom:10px">⏳ Pendientes de activación (${pendientes.length})</div>`;
+      html += pendientes.map(a => `
+        <div class="admin-tema-item" style="margin-bottom:6px">
+          <div style="flex:1">
+            <div style="font-weight:600">${a.nombre}</div>
+            <div style="font-size:12px;color:#888">${a.email} · Registrado: ${a.fechaRegistro?.toDate?.()?.toLocaleDateString('es-ES')||'—'}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn-sm" style="background:rgba(74,222,128,0.2);color:#4ade80" onclick="activarAlumno('${a.id}','${a.nombre}')">✅ Activar</button>
+            <button class="btn-sm btn-danger" onclick="rechazarAlumno('${a.id}','${a.nombre}')">🗑️ Rechazar</button>
+          </div>
+        </div>`).join('');
+      html += '</div>';
+    }
+
+    if (activados.length) {
+      html += `<div style="font-weight:700;color:#9999bb;margin-bottom:10px;font-size:13px">✅ Alumnos activos (${activados.length})</div>`;
+      html += activados.map(a => {
+        const s=a.estadisticas||{}, pct=s.totalPreguntas>0?Math.round((s.totalAciertos/s.totalPreguntas)*100):0;
+        return `<div class="admin-tema-item">
+          <div style="flex:1">
+            <div style="font-weight:600">${a.nombre}</div>
+            <div style="font-size:12px;color:#888">${a.email} · ${s.testsRealizados||0} tests · ${pct}% · ${s.puntos||0} pt · 🔥 ${a.rachaActual||0}</div>
+          </div>
+          <div style="display:flex;gap:6px"><span style="font-size:11px;color:#888">📱 ${(a.dispositivos||[]).length}/3</span><button class="btn-sm btn-danger" onclick="desactivarAlumno('${a.id}','${a.nombre}')">🚫 Desactivar</button><button class="btn-sm btn-secondary" onclick="resetDispositivos('${a.id}','${a.nombre}')">📱 Reset</button></div>
+        </div>`;
+      }).join('');
+    }
+
+    $('admin-alumnos-lista').innerHTML = html;
+  } catch(e) { $('admin-alumnos-lista').innerHTML='<p class="empty-msg">Error al cargar</p>'; }
+};
+
+window.activarAlumno = async (uid, nombre) => {
+  if (!confirm(`¿Activar acceso a ${nombre}?`)) return;
+  await updateDoc(doc(db,'alumnos',uid), { activado: true });
+  mostrarToast('✅ Alumno activado', nombre + ' ya puede acceder');
+  cargarAdminAlumnos();
+};
+
+window.rechazarAlumno = async (uid, nombre) => {
+  if (!confirm(`¿Rechazar y eliminar la cuenta de ${nombre}? Esto no se puede deshacer.`)) return;
+  await deleteDoc(doc(db,'alumnos',uid));
+  mostrarToast('🗑️ Cuenta eliminada', nombre);
+  cargarAdminAlumnos();
+};
+
+
+window.resetDispositivos = async (uid, nombre) => {
+  if (!confirm(`¿Resetear dispositivos de ${nombre}? Podrá volver a entrar desde cualquier dispositivo.`)) return;
+  await updateDoc(doc(db,'alumnos',uid), { dispositivos: [] });
+  mostrarToast('📱 Dispositivos reseteados', nombre);
+  cargarAdminAlumnos();
+};
+window.desactivarAlumno = async (uid, nombre) => {
+  if (!confirm(`¿Desactivar el acceso de ${nombre}? Podrás reactivarlo después.`)) return;
+  await updateDoc(doc(db,'alumnos',uid), { activado: false });
+  mostrarToast('🚫 Alumno desactivado', nombre);
+  cargarAdminAlumnos();
+};
+
+
+window.exportarPDF = () => {
+  const stats = alumnoData?.estadisticas || {};
+  const pct = stats.totalPreguntas>0 ? Math.round((stats.totalAciertos/stats.totalPreguntas)*100) : 0;
+  const logros = (alumnoData?.logros||[]).length;
+  const fecha = new Date().toLocaleDateString('es-ES');
+  const nombre = alumnoData?.nombre || '';
+  const estilos = 'body{font-family:Arial,sans-serif;padding:40px;color:#111;max-width:700px;margin:0 auto}h1{color:#d4a820;font-size:28px;margin-bottom:4px}h2{font-size:16px;color:#555;margin-bottom:30px;font-weight:normal}.stat{display:inline-block;text-align:center;margin:10px 20px 10px 0}.stat .num{font-size:36px;font-weight:bold;color:#d4a820}.stat .lab{font-size:12px;color:#888}.sep{border:none;border-top:1px solid #eee;margin:24px 0}';
+  const html = [
+    '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Informe SUI GENERIS</title>
+
+</head><body>',
+    '<h1>SUI GENERIS — Informe de progreso</h1>',
+    '<h2>' + nombre + ' — ' + fecha + '</h2>',
+    '<hr class="sep">',
+    '<div class="stat"><div class="num">' + (stats.testsRealizados||0) + '</div><div class="lab">Tests realizados</div></div>',
+    '<div class="stat"><div class="num">' + pct + '%</div><div class="lab">% de aciertos</div></div>',
+    '<div class="stat"><div class="num">' + (stats.totalPreguntas||0) + '</div><div class="lab">Preguntas respondidas</div></div>',
+    '<div class="stat"><div class="num">' + (alumnoData?.rachaMaxima||0) + '</div><div class="lab">Racha maxima</div></div>',
+    '<div class="stat"><div class="num">' + (stats.puntos||0) + '</div><div class="lab">Puntos</div></div>',
+    '<div class="stat"><div class="num">' + logros + '</div><div class="lab">Logros</div></div>',
+    '<hr class="sep">',
+    '<p style="color:#888;font-size:12px">Generado desde SUI GENERIS — Academia de Oposiciones a Bombero</p>',
+    '</body></html>'
+  ].join('');
+  const w = window.open('','_blank');
+  w.document.write(html);
+  w.document.close();
+  setTimeout(()=>w.print(), 500);
+};
+window.showAdminTab=(tab)=>{
+  document.querySelectorAll('.admin-tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.admin-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelector(`.admin-tab-btn[data-tab="${tab}"]`)?.classList.add('active');
+  document.querySelector(`.admin-tab[data-tab="${tab}"]`)?.classList.add('active');
+  if(tab==='alumnos') cargarAdminAlumnos();
+};
+</script>
+
+
+<style>
+:root{--bg:#080810;--bg2:#0f0f1a;--bg3:#141428;--card:#16162a;--card2:#1c1c34;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.12);--gold:#f0c040;--gold2:#d4a820;--red:#dc2626;--red2:#f87171;--text:#eeeef8;--text2:#8888aa;--text3:#555577;--green:#4ade80;--blue:#60a5fa;--shadow:0 8px 32px rgba(0,0,0,0.6);--radius:16px;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;background-image:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(240,192,64,0.06),transparent);}
+.screen{display:none;min-height:100vh;}.screen.active{display:flex;flex-direction:column;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.auth-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:20px;background:radial-gradient(ellipse 60% 40% at 50% 0%,rgba(220,38,38,0.12),transparent),radial-gradient(ellipse 80% 60% at 50% 100%,rgba(240,192,64,0.06),transparent),#080810;}
+.auth-box{background:rgba(22,22,42,0.97);border:1px solid rgba(240,192,64,0.2);border-radius:24px;padding:44px 40px;width:100%;max-width:460px;box-shadow:0 24px 80px rgba(0,0,0,0.7),inset 0 1px 0 rgba(255,255,255,0.05);}
+.auth-logo{text-align:center;margin-bottom:32px;}
+.auth-logo img{width:200px;margin-bottom:10px;filter:drop-shadow(0 0 20px rgba(240,192,64,0.5));}
+.auth-logo .sub{font-size:12px;color:var(--text2);letter-spacing:3px;text-transform:uppercase;font-weight:600;}
+.auth-logo .badge{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(220,38,38,0.25),rgba(240,192,64,0.25));border:1px solid rgba(240,192,64,0.35);color:var(--gold);font-size:11px;padding:5px 14px;border-radius:20px;margin-top:10px;letter-spacing:1.5px;font-weight:700;}
+.form-group{margin-bottom:16px;}.form-group label{display:block;font-size:11px;color:var(--text2);margin-bottom:7px;font-weight:700;letter-spacing:1px;text-transform:uppercase;}
+.form-group input{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:var(--text);padding:13px 16px;font-size:14px;font-family:'Outfit',sans-serif;transition:all .2s;outline:none;}
+.form-group input:focus{border-color:var(--gold);background:rgba(240,192,64,0.05);box-shadow:0 0 0 3px rgba(240,192,64,0.1);}
+.form-group input::placeholder{color:var(--text3);}
+.btn-gold{width:100%;background:linear-gradient(135deg,var(--gold),#e8a020);color:#0a0a10;font-family:'Outfit',sans-serif;font-weight:800;font-size:15px;padding:14px;border:none;border-radius:12px;cursor:pointer;transition:all .2s;box-shadow:0 4px 20px rgba(240,192,64,0.35);}
+.btn-gold:hover{transform:translateY(-2px);box-shadow:0 8px 28px rgba(240,192,64,0.45);}
+.auth-toggle{text-align:center;margin-top:18px;font-size:13px;color:var(--text2);}
+.auth-toggle a{color:var(--gold);cursor:pointer;font-weight:700;}
+.auth-error{display:none;background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.25);color:var(--red2);padding:11px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;}
+.forgot-link{display:block;text-align:right;font-size:12px;color:var(--text2);margin-top:-6px;margin-bottom:16px;cursor:pointer;font-weight:600;}.forgot-link:hover{color:var(--gold);}
+.pendiente-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg);}
+.pendiente-box{background:var(--card);border:1px solid rgba(240,192,64,0.2);border-radius:24px;padding:52px 40px;max-width:460px;width:100%;text-align:center;}
+.pendiente-icon{font-size:64px;margin-bottom:20px;}.pendiente-titulo{font-family:'Bebas Neue',sans-serif;font-size:34px;color:var(--gold);letter-spacing:3px;margin-bottom:10px;}
+.pendiente-texto{color:var(--text2);font-size:14px;line-height:1.7;margin-bottom:28px;}
+.main-header{background:rgba(14,14,24,0.96);border-bottom:1px solid rgba(240,192,64,0.1);padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:64px;flex-shrink:0;position:sticky;top:0;z-index:50;}
+.main-header .logo{display:flex;align-items:center;gap:10px;}
+.main-header .logo img{height:36px;filter:drop-shadow(0 0 8px rgba(240,192,64,0.4));}
+.main-header .logo-text{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--gold);letter-spacing:3px;}
+.main-header .logo-sub{font-size:10px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;}
+.header-user{display:flex;align-items:center;gap:10px;}.header-user .nombre{font-size:13px;color:var(--text2);font-weight:500;}
+.btn-logout{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:var(--text2);padding:7px 14px;border-radius:10px;cursor:pointer;font-size:13px;font-family:'Outfit',sans-serif;font-weight:600;transition:all .2s;}
+.btn-logout:hover{background:rgba(248,113,113,0.12);color:var(--red2);border-color:rgba(248,113,113,0.25);}
+.btn-preview{background:rgba(240,192,64,0.1);border:1px solid rgba(240,192,64,0.3);color:var(--gold);padding:7px 14px;border-radius:10px;cursor:pointer;font-size:13px;font-family:'Outfit',sans-serif;font-weight:700;transition:all .2s;display:none;align-items:center;gap:6px;}
+.btn-preview:hover{background:rgba(240,192,64,0.2);}
+.preview-banner{display:none;}.preview-banner.visible{display:flex;}
+.tabs-bar{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 20px;display:flex;flex-shrink:0;overflow-x:auto;}
+.tabs-bar::-webkit-scrollbar{display:none;}
+.tab-btn{padding:14px 18px;font-size:13px;font-weight:700;cursor:pointer;background:none;border:none;color:var(--text2);border-bottom:2px solid transparent;transition:all .2s;font-family:'Outfit',sans-serif;white-space:nowrap;}
+.tab-btn.active{color:var(--gold);border-bottom-color:var(--gold);}.tab-btn:hover:not(.active){color:var(--text);}
+.content{flex:1;overflow-y:auto;padding:28px 24px;max-width:1120px;margin:0 auto;width:100%;}
+.tab-panel{display:none;animation:fadeIn .2s ease;}.tab-panel.active{display:block;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;}
+.card-title{font-size:16px;font-weight:700;margin-bottom:16px;}.empty-msg{color:var(--text2);text-align:center;padding:36px;font-size:14px;}
+.stats-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;margin-bottom:24px;}
+.stat-card{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:14px;padding:18px 16px;text-align:center;transition:all .25s;position:relative;overflow:hidden;}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:0;transition:opacity .25s;}
+.stat-card:hover{border-color:rgba(240,192,64,0.25);transform:translateY(-2px);}.stat-card:hover::before{opacity:1;}
+.stat-num{font-family:'Bebas Neue',sans-serif;font-size:38px;color:var(--gold);line-height:1;}
+.stat-label{font-size:11px;color:var(--text2);margin-top:4px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;}
+.modos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;}
+.modo-btn{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:14px;padding:20px 18px;cursor:pointer;transition:all .25s;text-align:left;color:var(--text);font-family:'Outfit',sans-serif;}
+.modo-btn:hover{border-color:rgba(240,192,64,0.4);transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,0.4);}
+.modo-btn .icono{font-size:28px;margin-bottom:10px;display:block;}.modo-btn .titulo{font-weight:800;font-size:14px;}.modo-btn .desc{font-size:12px;color:var(--text2);margin-top:4px;line-height:1.4;}
+.bloque-section{margin-bottom:28px;}
+.bloque-titulo{font-size:17px;font-weight:800;padding-left:14px;border-left:4px solid var(--gold);margin-bottom:14px;}
+.temas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(195px,1fr));gap:12px;}
+.tema-card{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:14px;padding:20px 18px;cursor:pointer;transition:all .25s;}
+.tema-card:hover{border-color:rgba(240,192,64,0.4);transform:translateY(-4px);box-shadow:0 12px 32px rgba(0,0,0,0.5);}
+.tema-num{font-family:'Bebas Neue',sans-serif;font-size:13px;color:var(--gold);opacity:0.6;line-height:1;letter-spacing:2px;margin-bottom:6px;}
+.tema-nombre{font-weight:700;font-size:14px;margin:0 0 8px;line-height:1.3;}.tema-info{font-size:11px;color:var(--text2);font-weight:600;}.tema-progreso{font-size:11px;color:var(--gold);margin-top:6px;font-weight:700;}
+.test-container{max-width:740px;margin:0 auto;}
+.test-header{margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.test-titulo{font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--gold);letter-spacing:2px;}
+.test-timer{display:none;align-items:center;background:rgba(220,38,38,0.1);border:1px solid rgba(220,38,38,0.3);padding:7px 16px;border-radius:20px;font-weight:800;font-size:14px;color:var(--red2);}
+.prog-bar{background:rgba(255,255,255,0.06);border-radius:4px;height:4px;overflow:hidden;margin-bottom:14px;}
+.prog-fill{background:linear-gradient(90deg,var(--gold),#ff6b35);height:100%;transition:width .5s cubic-bezier(.4,0,.2,1);}
+.pregunta-box{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border2);border-radius:var(--radius);padding:28px;margin:0 0 12px;box-shadow:var(--shadow);position:relative;overflow:hidden;}
+.pregunta-box::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:220px;height:156px;background-image:url('https://suigenerisbomberos.github.io/suigeneris/MARCA_AGUA_A4_2025.png');background-size:contain;background-repeat:no-repeat;background-position:center;opacity:0.04;pointer-events:none;z-index:0;}
+.pregunta-box > *{position:relative;z-index:1;}
+.pregunta-text{font-size:17px;font-weight:600;line-height:1.6;margin-bottom:22px;color:var(--text);}
+.opciones{display:flex;flex-direction:column;gap:9px;}
+.opcion-btn{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);color:var(--text);padding:13px 16px;border-radius:12px;cursor:pointer;font-size:14px;font-weight:500;text-align:left;font-family:'Outfit',sans-serif;transition:all .15s;}
+.opcion-btn:hover:not([disabled]){border-color:rgba(240,192,64,0.4);background:rgba(240,192,64,0.05);transform:translateX(2px);}
+.opcion-btn.seleccionada{border-color:rgba(240,192,64,0.5);background:rgba(240,192,64,0.08);}
+.opcion-btn.correcta{background:rgba(74,222,128,0.1);border-color:rgba(74,222,128,0.4);color:var(--green);}
+.opcion-btn.incorrecta{background:rgba(248,113,113,0.1);border-color:rgba(248,113,113,0.4);color:var(--red2);}
+.opcion-btn[disabled]{cursor:default;}
+.opcion-letra{background:rgba(255,255,255,0.08);width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;font-weight:800;font-size:12px;flex-shrink:0;}
+.opcion-btn.correcta .opcion-letra{background:var(--green);color:#0a1a0a;}.opcion-btn.incorrecta .opcion-letra{background:var(--red2);color:#1a0a0a;}
+.test-explicacion{background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.2);border-radius:12px;padding:14px 16px;font-size:13px;color:#93c5fd;line-height:1.6;margin-top:12px;}
+.test-nav{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center;}
+.btn-nav{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text2);padding:10px 18px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;font-family:'Outfit',sans-serif;transition:all .2s;}
+.btn-nav:hover{border-color:rgba(240,192,64,0.4);color:var(--gold);}
+.btn-nav.primary{background:linear-gradient(135deg,var(--gold),#e8a020);color:#0a0a10;border-color:transparent;box-shadow:0 4px 14px rgba(240,192,64,0.3);}
+.btn-nav.primary:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(240,192,64,0.4);}
+.btn-nav.marcada{background:rgba(240,192,64,0.12);border-color:rgba(240,192,64,0.35);color:var(--gold);}
+.pantalla-resultado{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:100;align-items:center;justify-content:center;padding:20px;}
+.resultado-box{background:linear-gradient(135deg,#16162a,#1c1c34);border:1px solid rgba(240,192,64,0.25);border-radius:24px;padding:44px 36px;text-align:center;max-width:420px;width:100%;box-shadow:0 32px 80px rgba(0,0,0,0.8);}
+.resultado-titulo{font-size:24px;font-weight:800;margin-bottom:16px;}
+.resultado-pct{font-family:'Bebas Neue',sans-serif;font-size:88px;line-height:1;margin-bottom:10px;letter-spacing:2px;}
+.resultado-detalle{font-size:14px;color:var(--text2);margin-bottom:28px;line-height:1.6;}
+.resultado-btns{display:flex;flex-direction:column;gap:10px;}
+.hist-item{display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid var(--border);gap:12px;}.hist-item:last-child{border-bottom:none;}
+.logros-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:12px;}
+.logro-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;opacity:.45;transition:all .25s;}
+.logro-card.desbloqueado{opacity:1;border-color:rgba(240,192,64,0.35);background:linear-gradient(135deg,var(--card),rgba(240,192,64,0.06));}
+.logro-nombre{font-weight:800;font-size:14px;margin-bottom:5px;}.logro-desc{font-size:12px;color:var(--text2);margin-bottom:10px;}.logro-estado{font-size:11px;font-weight:700;text-transform:uppercase;}
+.logro-card.desbloqueado .logro-estado{color:var(--green);}
+.rank-item{display:flex;align-items:center;gap:14px;padding:13px 16px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:6px;transition:all .2s;}
+.rank-item.tu{border-color:rgba(240,192,64,0.35);background:linear-gradient(90deg,rgba(240,192,64,0.07),var(--card));}
+.rank-pos{font-weight:800;font-size:20px;min-width:34px;text-align:center;}
+.tema-stat-row{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--border);}.tema-stat-row:last-child{border-bottom:none;}
+.bar-mini{width:100px;height:5px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;}.bar-mini-fill{height:100%;transition:width .5s;border-radius:4px;}
+.admin-input-row{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.admin-input-row input,.admin-input-row select{flex:1;min-width:160px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);padding:11px 14px;font-size:14px;font-family:'Outfit',sans-serif;outline:none;}
+.admin-input-row input:focus,.admin-input-row select:focus{border-color:var(--gold);}
+.admin-input-row select option{background:var(--bg2);}.admin-input-row input[type=color]{padding:4px;min-width:50px;max-width:60px;}
+.btn-add{background:linear-gradient(135deg,var(--gold),#e8a020);color:#0a0a10;border:none;border-radius:10px;padding:11px 20px;font-weight:800;cursor:pointer;font-family:'Outfit',sans-serif;font-size:14px;white-space:nowrap;box-shadow:0 4px 14px rgba(240,192,64,0.3);transition:all .2s;}
+.btn-add:hover{transform:translateY(-1px);}
+.admin-tema-item{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:11px;margin-bottom:6px;gap:10px;transition:all .2s;}
+.admin-tema-item:hover{border-color:var(--border2);}
+.btn-sm{padding:7px 12px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:700;font-family:'Outfit',sans-serif;transition:all .2s;}
+.btn-primary{background:rgba(96,165,250,0.15);color:var(--blue);}.btn-primary:hover{background:rgba(96,165,250,0.25);}
+.btn-secondary{background:rgba(255,255,255,0.07);color:var(--text2);}.btn-secondary:hover{background:rgba(255,255,255,0.13);}
+.btn-danger{background:rgba(248,113,113,0.12);color:var(--red2);}.btn-danger:hover{background:rgba(248,113,113,0.22);}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:200;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto;}
+.modal-box{background:var(--bg2);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:28px;width:100%;max-width:820px;margin:auto;box-shadow:0 32px 80px rgba(0,0,0,0.7);}
+.modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;gap:12px;}
+.modal-header h2{font-size:18px;font-weight:800;}.btn-cerrar{background:none;border:none;color:var(--text2);font-size:22px;cursor:pointer;}.btn-cerrar:hover{color:var(--text);}
+.modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+.form-preg{display:flex;flex-direction:column;gap:11px;}
+.form-preg label{display:block;font-size:11px;color:var(--text2);margin-bottom:4px;font-weight:700;text-transform:uppercase;}
+.form-preg input,.form-preg textarea,.form-preg select{width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:9px;color:var(--text);padding:10px 13px;font-size:13px;font-family:'Outfit',sans-serif;outline:none;}
+.form-preg input:focus,.form-preg textarea:focus,.form-preg select:focus{border-color:var(--gold);}
+.form-preg textarea{resize:vertical;min-height:72px;}.form-preg select option{background:var(--bg2);}
+.pregunta-item{display:flex;align-items:flex-start;gap:10px;padding:12px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:11px;margin-bottom:7px;}
+.lista-preguntas{max-height:400px;overflow-y:auto;}
+.selector-tema-item{display:flex;align-items:center;gap:13px;padding:13px 15px;background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:11px;margin-bottom:7px;cursor:pointer;transition:all .2s;}
+.selector-tema-item:hover{border-color:rgba(240,192,64,0.3);}
+.selector-tema-item input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold);cursor:pointer;flex-shrink:0;}
+.selector-all-btns{display:flex;gap:8px;margin-bottom:14px;}
+.btn-sel{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text2);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-family:'Outfit',sans-serif;font-weight:700;transition:all .2s;}
+.btn-sel:hover{border-color:rgba(240,192,64,0.4);color:var(--gold);}
+.fallada-item{padding:13px;background:rgba(248,113,113,0.05);border:1px solid rgba(248,113,113,0.15);border-radius:11px;margin-bottom:8px;}
+.toast{position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#1c1c34,#16162a);border:1px solid rgba(240,192,64,0.3);border-radius:14px;padding:15px 20px;min-width:250px;transform:translateX(120%);transition:transform .4s cubic-bezier(.4,0,.2,1);z-index:300;box-shadow:0 16px 40px rgba(0,0,0,0.6);}
+.toast.show{transform:translateX(0);}
+@media(max-width:600px){.modal-grid{grid-template-columns:1fr;}.content{padding:16px 14px;}.pregunta-box{padding:20px 16px;}.pregunta-text{font-size:15px;}.auth-box{padding:32px 24px;}.stats-row{grid-template-columns:repeat(3,1fr);}}
+</style>
+</head>
+<body>
+
+<!-- AUTH -->
+<div class="screen active" data-screen="auth">
+  <div class="auth-wrap">
+    <div class="auth-box">
+      <div class="auth-logo">
+        <img src="https://suigenerisbomberos.github.io/suigeneris/MARCA_AGUA_A4_2025.png" alt="SUI GENERIS" style="width:180px;opacity:0.9;margin-bottom:8px;filter:drop-shadow(0 0 12px rgba(240,192,64,0.4))">
+        <div class="sub">Academia · Oposiciones Bombero</div>
+        <div class="badge">🔥 ACCESO ALUMNOS</div>
+      </div>
+      <div id="auth-error" class="auth-error"></div>
+      <div id="form-registro">
+        <div class="form-group"><label>Nombre completo</label><input id="reg-nombre" type="text" placeholder="Tu nombre"></div>
+        <div class="form-group"><label>Email</label><input id="reg-email" type="email" placeholder="tu@email.com"></div>
+        <div class="form-group"><label>Contraseña (mínimo 6)</label><input id="reg-pass" type="password" placeholder="••••••••"></div>
+        <button class="btn-gold" onclick="registrarse()">Crear cuenta</button>
+        <p class="auth-toggle">¿Ya tienes cuenta? <a onclick="toggleAuthForm()">Inicia sesión</a></p>
+      </div>
+      <div id="form-login" style="display:none">
+        <div class="form-group"><label>Email</label><input id="login-email" type="email" placeholder="tu@email.com"></div>
+        <div class="form-group"><label>Contraseña</label><input id="login-pass" type="password" placeholder="••••••••"></div>
+        <a class="forgot-link" onclick="recuperarPassword()">¿Olvidaste tu contraseña?</a>
+        <button class="btn-gold" onclick="loginAlumno()">Entrar</button>
+        <p class="auth-toggle">¿Sin cuenta? <a onclick="toggleAuthForm()">Regístrate</a></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PANTALLA PENDIENTE DE ACTIVACIÓN -->
+<div class="screen" data-screen="pendiente">
+  <div class="pendiente-wrap">
+    <div class="pendiente-box">
+      <div class="pendiente-icon">⏳</div>
+      <div class="pendiente-titulo">CUENTA PENDIENTE</div>
+      <p class="pendiente-texto">
+        Hola <strong id="pendiente-nombre"></strong>, tu cuenta está pendiente de activación por el profesor.<br><br>
+        En cuanto revise tu solicitud podrás acceder. Si tienes urgencia, contacta directamente con la academia.
+      </p>
+      <button class="btn-gold" onclick="cerrarSesion()" style="max-width:200px;margin:0 auto">Cerrar sesión</button>
+    </div>
+  </div>
+</div>
+
+<!-- ALUMNO -->
+<div class="screen" data-screen="alumno">
+  <div class="main-header">
+    <div class="logo"><img src="https://suigenerisbomberos.github.io/suigeneris/MARCA_AGUA_A4_2025.png" alt="SUI GENERIS"><div><div class="logo-text">SUI GENERIS</div><div class="logo-sub">Oposiciones Bombero</div></div></div>
+    <div class="header-user">
+      <span class="nombre">Hola, <strong id="alumno-nombre"></strong></span>
+      <button class="btn-preview" id="btn-instalar-pwa" onclick="instalarPWA()" style="display:none">📲 Instalar app</button>
+      <button class="btn-preview" id="btn-salir-preview" onclick="salirVistaPrevia()">← Volver al admin</button>
+      <button class="btn-logout" onclick="cerrarSesion()">Salir</button>
+    </div>
+  </div>
+  <div class="tabs-bar">
+    <button class="tab-btn alumno-tab-btn active" data-tab="inicio" onclick="showAlumnoTab('inicio')">🏠 Inicio</button>
+    <button class="tab-btn alumno-tab-btn" data-tab="temas" onclick="showAlumnoTab('temas')">📚 Temas</button>
+    <button class="tab-btn alumno-tab-btn" data-tab="test" onclick="showAlumnoTab('test')">🎯 Test</button>
+    <button class="tab-btn alumno-tab-btn" data-tab="progreso" onclick="showAlumnoTab('progreso')">📊 Progreso</button>
+    <button class="tab-btn alumno-tab-btn" data-tab="ranking" onclick="showAlumnoTab('ranking')">🏆 Ranking</button>
+  </div>
+  <div class="content">
+    <div class="tab-panel alumno-tab active" data-tab="inicio">
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-num" id="stat-tests">0</div><div class="stat-label">Tests</div></div>
+        <div class="stat-card"><div class="stat-num" id="stat-aciertos">0%</div><div class="stat-label">Aciertos</div></div>
+        <div class="stat-card"><div class="stat-num" id="stat-preguntas">0</div><div class="stat-label">Preguntas</div></div>
+        <div class="stat-card"><div class="stat-num" id="stat-racha">0</div><div class="stat-label">Racha 🔥</div></div>
+        <div class="stat-card"><div class="stat-num" id="stat-puntos">0</div><div class="stat-label">Puntos</div></div>
+        <div class="stat-card"><div class="stat-num" id="stat-logros">0/0</div><div class="stat-label">Logros</div></div>
+      </div>
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">⚡ Modos de test</div>
+        <div class="modos-grid">
+          <button class="modo-btn" onclick="iniciarTestMezclado()"><div class="icono">🔀</div><div class="titulo">Test mixto</div><div class="desc">Preguntas de todos los temas</div></button>
+          <button class="modo-btn" onclick="iniciarSimulacro()"><div class="icono">⏱️</div><div class="titulo">Simulacro</div><div class="desc">Cronometrado tipo examen</div></button>
+          <button class="modo-btn" onclick="iniciarTestFalladas()"><div class="icono">🔄</div><div class="titulo">Repaso falladas</div><div class="desc">Solo preguntas que has fallado</div></button>
+          <button class="modo-btn" onclick="showAlumnoTab('temas')"><div class="icono">📚</div><div class="titulo">Por tema</div><div class="desc">Elige un tema concreto</div></button>
+        </div>
+      </div>
+      <div class="card"><div class="card-title">📋 Últimos resultados</div><div id="historial-lista"></div></div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="temas">
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:6px">Elige un tema</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Haz clic en cualquier tema para empezar un test</p>
+      <div id="bloques-container"></div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="test">
+      <div class="test-container">
+        <div id="no-test" style="text-align:center;padding:50px 20px;color:var(--text2)">
+          <div style="font-size:46px;margin-bottom:12px">🎯</div>
+          <p style="font-size:15px">Selecciona un modo de test desde Inicio o un tema concreto</p>
+        </div>
+        <div id="test-activo" style="display:none">
+          <div class="test-header">
+            <div><div class="test-titulo" id="test-titulo"></div><div class="test-prog-texto" id="test-prog-texto" style="display:none"></div></div>
+            <div class="test-timer" id="test-timer"></div>
+          </div>
+          <div class="prog-bar"><div class="prog-fill" id="test-prog-bar" style="width:0%"></div></div>
+          <div class="pregunta-box">
+            <div class="pregunta-text" id="test-pregunta"></div>
+            <div class="opciones" id="test-opciones"></div>
+            <div class="test-explicacion" id="test-explicacion" style="display:none"></div>
+          </div>
+          <div class="test-nav">
+            <button class="btn-nav" id="btn-anterior" onclick="anterior()">← Anterior</button>
+            <button class="btn-nav" id="btn-marcar" onclick="toggleMarcar()">🚩 Marcar</button>
+            <button class="btn-nav" id="btn-modo" onclick="toggleModoEstudio()" style="background:rgba(74,222,128,0.15);color:var(--green)">📖 Modo estudio</button>
+            <span id="test-tiempo-preg" style="font-size:12px;color:var(--text2);align-self:center;padding:0 4px"></span>
+            <div style="flex:1"></div>
+            <button class="btn-nav" id="btn-siguiente" onclick="siguiente()">Siguiente →</button>
+            <button class="btn-nav primary" id="btn-finalizar" onclick="finalizarTest()">Finalizar ✓</button>
+          </div>
+          <div id="nota-area"></div>
+
+        </div>
+      </div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="progreso">
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:18px">Mi progreso</h2>
+      <div style="margin-bottom:14px"><button class="btn-nav primary" onclick="exportarPDF()">📄 Exportar informe PDF</button></div>
+      <div class="card" style="margin-bottom:18px"><div class="card-title">🏆 Logros</div><div class="logros-grid" id="logros-grid"></div></div>
+      <div class="card" style="margin-bottom:18px"><div class="card-title">📊 Aciertos por tema</div><div id="aciertos-tema"></div></div>
+      <div class="card" style="margin-bottom:18px"><div class="card-title">❌ Preguntas más falladas</div><div id="mas-falladas"></div></div>
+      <div class="card"><div class="card-title">📋 Historial completo</div><div id="historial-lista-full"></div></div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="ranking">
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:6px">🏆 Ranking</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Top alumnos por puntos. Ganas 10 puntos por acierto y +50 por simulacro.</p>
+      <div id="ranking-lista"></div>
+    </div>
+  </div>
+</div>
+
+<!-- RESULTADO -->
+<div class="pantalla-resultado" id="pantalla-resultado">
+  <div class="resultado-box">
+    <div class="resultado-titulo" id="resultado-titulo"></div>
+    <div class="resultado-pct" id="resultado-pct"></div>
+    <div class="resultado-detalle" id="resultado-detalle"></div>
+    <div class="resultado-btns">
+      <button class="btn-nav primary" onclick="verRespuestas()">Ver respuestas</button>
+      <button class="btn-nav" onclick="nuevoTest()">Nuevo test</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN -->
+<div class="screen" data-screen="admin">
+  <div class="main-header">
+    <div class="logo"><img src="https://suigenerisbomberos.github.io/suigeneris/MARCA_AGUA_A4_2025.png" alt="SUI GENERIS"><div><div class="logo-text">SUI GENERIS</div><div class="logo-sub">Panel de Admin</div></div></div>
+    <div class="header-user">
+      <span class="nombre" id="admin-email" style="color:var(--gold);font-size:13px"></span>
+      <button class="btn-preview" style="display:flex" onclick="activarVistaPrevia()">👁️ Vista alumno</button>
+      <button class="btn-logout" onclick="cerrarSesion()">Salir</button>
+    </div>
+  </div>
+  <div class="tabs-bar">
+    <button class="tab-btn admin-tab-btn active" data-tab="resumen" onclick="showAdminTab('resumen')">📊 Resumen</button>
+    <button class="tab-btn admin-tab-btn" data-tab="bloques" onclick="showAdminTab('bloques')">📁 Bloques</button>
+    <button class="tab-btn admin-tab-btn" data-tab="temas" onclick="showAdminTab('temas')">📚 Temas y preguntas</button>
+    <button class="tab-btn admin-tab-btn" data-tab="alumnos" onclick="showAdminTab('alumnos')">👥 Alumnos</button>
+  </div>
+  <div class="content">
+    <div class="tab-panel admin-tab active" data-tab="resumen">
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-num" id="admin-stat-alumnos">0</div><div class="stat-label">Alumnos</div></div>
+        <div class="stat-card"><div class="stat-num" id="admin-stat-bloques">0</div><div class="stat-label">Bloques</div></div>
+        <div class="stat-card"><div class="stat-num" id="admin-stat-temas">0</div><div class="stat-label">Temas</div></div>
+        <div class="stat-card"><div class="stat-num" id="admin-stat-preguntas">0</div><div class="stat-label">Preguntas</div></div>
+      </div>
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">⚙️ Administradores activos</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="admin-tema-item"><div>👑 <strong>josecarlos099@hotmail.com</strong></div><div style="font-size:12px;color:var(--gold)">Admin principal</div></div>
+          <div class="admin-tema-item"><div>🛡️ <strong>miguelnl83@gmail.com</strong></div><div style="font-size:12px;color:var(--gold)">Admin secundario</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">👋 Guía rápida</div>
+        <ul style="color:var(--text2);font-size:14px;line-height:1.8;padding-left:20px">
+          <li>👁️ <strong>Vista alumno</strong>: botón arriba a la derecha para ver la plataforma como la ven tus alumnos</li>
+          <li>📁 <strong>Bloques</strong>: agrupa temas (ej: "Legislación", "Materiales")</li>
+          <li>📚 <strong>Temas y preguntas</strong>: crea temas y añade preguntas</li>
+          <li>👥 <strong>Alumnos</strong>: activa o desactiva el acceso de cada alumno</li>
+        </ul>
+      </div>
+    </div>
+    <div class="tab-panel admin-tab" data-tab="bloques">
+      <div class="card">
+        <div class="card-title">➕ Nuevo bloque</div>
+        <div class="admin-input-row">
+          <input id="nuevo-bloque-nombre" type="text" placeholder="Ej: Bloque I — Legislación">
+          <input id="nuevo-bloque-color" type="color" value="#f0c040">
+          <button class="btn-add" onclick="crearBloque()">+ Crear bloque</button>
+        </div>
+        <div id="admin-bloques-lista"></div>
+      </div>
+    </div>
+    <div class="tab-panel admin-tab" data-tab="temas">
+      <div class="card">
+        <div class="card-title">➕ Nuevo tema</div>
+        <div class="admin-input-row">
+          <input id="nuevo-tema-nombre" type="text" placeholder="Ej: Tema 1 — Química del fuego" onkeydown="if(event.key==='Enter') crearTema()">
+          <select id="nuevo-tema-bloque"><option value="">Sin bloque</option></select>
+          <button class="btn-add" onclick="crearTema()">+ Crear tema</button>
+        </div>
+        <div id="admin-temas-lista"></div>
+      </div>
+    </div>
+    <div class="tab-panel admin-tab" data-tab="alumnos">
+      <div class="card">
+        <div class="card-title">👥 Gestión de alumnos</div>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Los alumnos que se registren aparecerán primero como <strong>pendientes</strong>. Actívalos para que puedan acceder.</p>
+        <div id="admin-alumnos-lista"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PREGUNTAS -->
+<div class="modal-overlay" id="modal-preguntas">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>✏️ Preguntas — <span id="modal-tema-nombre" style="color:var(--gold)"></span></h2>
+      <button class="btn-cerrar" onclick="cerrarModal()">✕</button>
+    </div>
+    <div class="modal-grid">
+      <div class="form-preg">
+        <input type="hidden" id="preg-edit-id">
+        <div><label>Enunciado</label><textarea id="preg-enunciado" rows="3" placeholder="Escribe la pregunta..."></textarea></div>
+        <div><label>Opción A</label><input id="preg-op0" type="text"></div>
+        <div><label>Opción B</label><input id="preg-op1" type="text"></div>
+        <div><label>Opción C</label><input id="preg-op2" type="text"></div>
+        <div><label>Opción D</label><input id="preg-op3" type="text"></div>
+        <div><label>Respuesta correcta</label>
+          <select id="preg-correcta"><option value="">Selecciona...</option><option value="0">A</option><option value="1">B</option><option value="2">C</option><option value="3">D</option></select>
+        </div>
+        <div><label>Explicación (recomendado)</label><textarea id="preg-explicacion" rows="2" placeholder="Por qué es correcta..."></textarea></div>
+        <button class="btn-add" id="btn-guardar-preg" onclick="guardarPregunta()" style="width:100%">➕ Añadir pregunta</button>
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:8px;font-size:14px">Preguntas del tema</div>
+        <div class="lista-preguntas" id="modal-lista-preguntas"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- MODAL SELECTOR TEMAS MIXTO -->
+<div class="modal-overlay" id="modal-selector-temas">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-header">
+      <h2>🔀 Test mixto — Elige temas</h2>
+      <button class="btn-cerrar" onclick="cerrarSelectorTemas()">✕</button>
+    </div>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:14px">Selecciona los temas que quieres incluir en el test. Se mezclarán todas sus preguntas aleatoriamente.</p>
+    <div class="selector-all-btns">
+      <button class="btn-sel" onclick="document.querySelectorAll('.selector-check').forEach(c=>c.checked=true)">✅ Todos</button>
+      <button class="btn-sel" onclick="document.querySelectorAll('.selector-check').forEach(c=>c.checked=false)">☐ Ninguno</button>
+    </div>
+    <div id="selector-temas-lista" style="max-height:400px;overflow-y:auto"></div>
+    <button class="btn-add" onclick="confirmarTestMixto()" style="width:100%;margin-top:16px">▶️ Empezar test mixto</button>
+  </div>
+</div>
+
+<!-- MODAL SIMULACRO -->
+<div class="modal-overlay" id="modal-simulacro">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-header">
+      <h2>⏱️ Configurar simulacro</h2>
+      <button class="btn-cerrar" onclick="cerrarModalSim()">✕</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="form-preg"><label>Número de preguntas</label>
+        <select id="sim-numpreguntas"><option value="50">50 preguntas</option><option value="100" selected>100 preguntas</option><option value="150">150 preguntas</option></select>
+      </div>
+      <div class="form-preg"><label>Tiempo (minutos)</label>
+        <select id="sim-minutos"><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90" selected>90 minutos</option><option value="120">120 minutos</option></select>
+      </div>
+      <p style="color:var(--text2);font-size:13px;line-height:1.5">⚠️ Modo examen: no verás las respuestas hasta el final.</p>
+      <button class="btn-add" onclick="confirmarSimulacro()" style="width:100%">▶️ Empezar simulacro</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// PWA install
+let deferredPrompt;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferredPrompt = e;
+  const btn = document.getElementById('btn-instalar-pwa');
+  if (btn) btn.style.display = 'flex';
+});
+window.addEventListener('appinstalled', () => {
+  const btn = document.getElementById('btn-instalar-pwa');
+  if (btn) btn.style.display = 'none';
+});
+window.instalarPWA = async () => {
+  if (!deferredPrompt) return alert('Para instalar: en tu navegador busca "Añadir a pantalla de inicio" o "Instalar app"');
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  deferredPrompt = null;
+};
+</script>
+</body>
+</html>
