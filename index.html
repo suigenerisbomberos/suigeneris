@@ -54,6 +54,23 @@ function getDeviceId() {
 function _testKey() { return 'sg_test_encurso_' + (currentUser ? currentUser.uid : 'anon'); }
 function leerTestEnCurso() { try { const r = localStorage.getItem(_testKey()); return r ? JSON.parse(r) : null; } catch(e) { return null; } }
 function borrarTestEnCurso() { try { localStorage.removeItem(_testKey()); } catch(e){} }
+function entrarModoTest() { document.querySelector('[data-screen="alumno"]')?.classList.add('modo-test'); }
+function salirModoTest() { document.querySelector('[data-screen="alumno"]')?.classList.remove('modo-test'); }
+window.salirDelTest = () => {
+  if (!testActivo) { salirModoTest(); showAlumnoTab('inicio'); return; }
+  if (!testFinalizado) {
+    if (testActivo.tipo === 'simulacro') {
+      if (!confirm('Si sales del simulacro se dará por abandonado y no se guarda. ¿Salir?')) return;
+      borrarTestEnCurso();
+    } else {
+      guardarTestEnCurso();
+      mostrarToast('Progreso guardado', 'Puedes continuar este test cuando quieras desde Inicio.');
+    }
+  }
+  testActivo = null; testFinalizado = false; pararTimer();
+  if (timerPregunta) { clearInterval(timerPregunta); timerPregunta = null; }
+  salirModoTest(); showAlumnoTab('inicio'); renderInicio(); actualizarReanudarUI();
+};
 function guardarTestEnCurso() {
   if (!testActivo || testFinalizado || modoVistaPrevia) return;
   if (testActivo.tipo === 'simulacro') return; // un examen cronometrado no se pausa
@@ -101,6 +118,7 @@ window.reanudarTestEnCurso = () => {
   modoExamenGlobal = !!g.modoExamen; testFinalizado = false; testInicio = Date.now();
   const btn = document.getElementById('btn-modo-examen');
   if (btn) { btn.textContent = modoExamenGlobal ? '📖 Modo estudio' : '📝 Modo examen'; btn.classList.toggle('active-examen', modoExamenGlobal); }
+  entrarModoTest();
   showAlumnoTab('test'); renderTest(); iniciarTimerPregunta();
 };
 
@@ -602,6 +620,7 @@ function iniciarTestComun() {
   tiempoPregunta=0; if(timerPregunta) clearInterval(timerPregunta);
   if (testActivo.tipo==='simulacro') { modoExamenGlobal=true; iniciarTimer(); }
   else { modoExamenGlobal=false; }
+  entrarModoTest();
   showAlumnoTab('test'); renderTest();
   iniciarTimerPregunta();
 }
@@ -713,7 +732,7 @@ window.guardarNota=async(el)=>{
   if(!modoVistaPrevia && pid) try{ await setDoc(doc(db,'alumnos',currentUser.uid,'notas',pid),{texto:txt,fecha:serverTimestamp()}); }catch(e){}
 };
 window.verRespuestas=()=>{$('pantalla-resultado').style.display='none';testActivo.indice=0;renderTest();};
-window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;pararTimer();borrarTestEnCurso();actualizarReanudarUI();showAlumnoTab('temas');renderInicio();};
+window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;testFinalizado=false;pararTimer();borrarTestEnCurso();salirModoTest();showAlumnoTab('inicio');renderInicio();actualizarReanudarUI();};
 
 window.showAlumnoTab=(tab)=>{
   document.querySelectorAll('.alumno-tab-btn').forEach(b=>b.classList.remove('active'));
@@ -1166,6 +1185,40 @@ body {
   .main-header .logo { font-size: 20px; }
   .main-header .logo img { height: 30px; }
 }
+
+/* ── Navegación: menú inferior fijo (móvil) + modo concentración ── */
+[data-screen="alumno"] .tabs-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+  background: rgba(15,31,58,0.97); backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(240,192,64,0.18); border-bottom: none;
+  padding: 6px 4px; justify-content: space-around; overflow: visible;
+}
+[data-screen="alumno"] .tab-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 6px 4px; font-size: 11px; font-weight: 600; border-bottom: none; border-radius: 12px; letter-spacing: 0;
+}
+[data-screen="alumno"] .tab-btn .ico { font-size: 21px; line-height: 1; }
+[data-screen="alumno"] .tab-btn.active { color: var(--gold); border-bottom: none; }
+[data-screen="alumno"] .content { padding-bottom: 88px; }
+[data-screen="alumno"].modo-test .main-header,
+[data-screen="alumno"].modo-test .tabs-bar { display: none; }
+[data-screen="alumno"].modo-test .content { padding-bottom: 24px; }
+.btn-salir-test {
+  background: rgba(212,80,10,0.15); border: 1px solid rgba(212,80,10,0.55); color: #ff8a4c;
+  padding: 9px 15px; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 700;
+  font-family: 'Outfit', sans-serif; display: inline-flex; align-items: center; gap: 6px; transition: all .2s; white-space: nowrap;
+}
+.btn-salir-test:hover { background: rgba(212,80,10,0.3); }
+@media (min-width: 601px) {
+  [data-screen="alumno"] .tabs-bar {
+    position: static; background: var(--bg2); border-top: none;
+    border-bottom: 1px solid var(--border); justify-content: center; gap: 10px; padding: 0 20px;
+  }
+  [data-screen="alumno"] .tab-btn { flex: 0 0 auto; flex-direction: row; gap: 8px; padding: 14px 18px; border-radius: 0; font-size: 13px; font-weight: 700; }
+  [data-screen="alumno"] .tab-btn.active { border-bottom: 2px solid var(--gold); }
+  [data-screen="alumno"] .tab-btn .ico { font-size: 16px; }
+  [data-screen="alumno"] .content { padding-bottom: 32px; }
+}
 </style>
 </head>
 <body>
@@ -1225,11 +1278,10 @@ body {
     </div>
   </div>
   <div class="tabs-bar">
-    <button class="tab-btn alumno-tab-btn active" data-tab="inicio" onclick="showAlumnoTab('inicio')">🏠 Inicio</button>
-    <button class="tab-btn alumno-tab-btn" data-tab="temas" onclick="showAlumnoTab('temas')">📚 Temas</button>
-    <button class="tab-btn alumno-tab-btn" data-tab="test" onclick="showAlumnoTab('test')">🎯 Test</button>
-    <button class="tab-btn alumno-tab-btn" data-tab="progreso" onclick="showAlumnoTab('progreso')">📊 Progreso</button>
-    <button class="tab-btn alumno-tab-btn" data-tab="ranking" onclick="showAlumnoTab('ranking')">🏆 Ranking</button>
+    <button class="tab-btn alumno-tab-btn active" data-tab="inicio" onclick="showAlumnoTab('inicio')"><span class="ico">🏠</span><span>Inicio</span></button>
+    <button class="tab-btn alumno-tab-btn" data-tab="temas" onclick="showAlumnoTab('temas')"><span class="ico">🎯</span><span>Tests</span></button>
+    <button class="tab-btn alumno-tab-btn" data-tab="progreso" onclick="showAlumnoTab('progreso')"><span class="ico">📊</span><span>Progreso</span></button>
+    <button class="tab-btn alumno-tab-btn" data-tab="ranking" onclick="showAlumnoTab('ranking')"><span class="ico">🏆</span><span>Ranking</span></button>
   </div>
   <div class="content">
     <div class="tab-panel alumno-tab active" data-tab="inicio">
@@ -1246,20 +1298,20 @@ body {
         <div id="reanudar-info" style="font-size:13px;color:var(--text2);margin-bottom:12px"></div>
         <button class="btn-nav primary" onclick="reanudarTestEnCurso()" style="width:100%">Continuar donde lo dejé</button>
       </div>
-      <div class="card" style="margin-bottom:18px">
+      <button onclick="showAlumnoTab('temas')" style="width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:16px;padding:20px;color:#fff;font-size:17px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 10px 30px rgba(212,80,10,0.35)">▶ Empezar test</button>
+      <div class="card"><div class="card-title">📋 Últimos resultados</div><div id="historial-lista"></div></div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="temas">
+      <div class="card" style="margin-bottom:22px">
         <div class="card-title">⚡ Modos de test</div>
         <div class="modos-grid">
           <button class="modo-btn" onclick="iniciarTestMezclado()"><div class="icono">🔀</div><div class="titulo">Test mixto</div><div class="desc">Preguntas de todos los temas</div></button>
           <button class="modo-btn" onclick="iniciarSimulacro()"><div class="icono">⏱️</div><div class="titulo">Simulacro</div><div class="desc">Cronometrado tipo examen</div></button>
           <button class="modo-btn" onclick="iniciarTestFalladas()"><div class="icono">🔄</div><div class="titulo">Repaso falladas</div><div class="desc">Solo preguntas que has fallado</div></button>
-          <button class="modo-btn" onclick="showAlumnoTab('temas')"><div class="icono">📚</div><div class="titulo">Por tema</div><div class="desc">Elige un tema concreto</div></button>
         </div>
       </div>
-      <div class="card"><div class="card-title">📋 Últimos resultados</div><div id="historial-lista"></div></div>
-    </div>
-    <div class="tab-panel alumno-tab" data-tab="temas">
-      <h2 style="font-size:20px;font-weight:700;margin-bottom:6px">Elige un tema</h2>
-      <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Haz clic en cualquier tema para empezar un test</p>
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:6px">O elige un tema concreto</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Toca cualquier tema para empezar un test de ese tema</p>
       <div id="bloques-container"></div>
     </div>
     <div class="tab-panel alumno-tab" data-tab="test">
@@ -1275,7 +1327,8 @@ body {
         </div>
         <div id="test-activo" style="display:none">
           <div class="test-header">
-            <div><div class="test-titulo" id="test-titulo"></div></div>
+            <button class="btn-salir-test" onclick="salirDelTest()">← Salir</button>
+            <div class="test-titulo" id="test-titulo" style="flex:1;min-width:0"></div>
             <div class="test-timer" id="test-timer"></div>
           </div>
           <div class="prog-bar"><div class="prog-fill" id="test-prog-bar" style="width:0%"></div></div>
@@ -1323,7 +1376,7 @@ body {
     <div class="resultado-detalle" id="resultado-detalle"></div>
     <div class="resultado-btns">
       <button class="btn-nav primary" onclick="verRespuestas()">Ver respuestas</button>
-      <button class="btn-nav" onclick="nuevoTest()">Nuevo test</button>
+      <button class="btn-nav" onclick="nuevoTest()">Volver al inicio</button>
     </div>
   </div>
 </div>
