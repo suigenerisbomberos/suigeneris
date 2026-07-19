@@ -91,6 +91,7 @@ function guardarTestEnCurso() {
     localStorage.setItem(_testKeyFor(testActivo.temaId), JSON.stringify({
       tipo: testActivo.tipo, temaId: testActivo.temaId, temaNombre: testActivo.temaNombre,
       ordenIds: testActivo.preguntas.map(p=>p.id),
+      ordenOpc: testActivo.preguntas.map(p=>p._perm||null),
       indice: testActivo.indice,
       respuestas: respuestasTest,
       marcadas: [...preguntasMarcadas],
@@ -103,7 +104,12 @@ function guardarTestEnCurso() {
 window.reanudarTest = (id) => {
   const g = leerTest(id);
   if (!g) return;
-  const ps = g.ordenIds.map(x => preguntas.find(p=>p.id===x)).filter(Boolean);
+  const ps = g.ordenIds.map((x,idx) => {
+    const base = preguntas.find(p=>p.id===x);
+    if (!base) return null;
+    const perm = (g.ordenOpc && g.ordenOpc[idx]) || [...Array(base.opciones.length).keys()];
+    return aplicarPerm(base, perm);
+  }).filter(Boolean);
   if (!ps.length || ps.length !== g.ordenIds.length) {
     borrarTest(id);
     return alert('Ese test guardado ya no está disponible (cambiaron las preguntas del tema). Empieza uno nuevo.');
@@ -566,7 +572,20 @@ window.iniciarTestFalladas = async () => {
   } catch(e) { alert('Error al cargar falladas'); }
 };
 
+// Baraja el orden de las opciones A/B/C/D de cada pregunta (para que no se
+// memorice la posición). Conserva cuál es la correcta ajustando su índice.
+function _baraja(a){ const x=[...a]; for(let i=x.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[x[i],x[j]]=[x[j],x[i]];} return x; }
+function aplicarPerm(base, perm){
+  const opciones = perm.map(i=>base.opciones[i]);
+  const correcta = perm.indexOf(base.correcta);
+  return { ...base, opciones, correcta, _perm:perm };
+}
+function prepararPregunta(base){
+  return aplicarPerm(base, _baraja([...Array(base.opciones.length).keys()]));
+}
+
 function iniciarTestComun() {
+  testActivo.preguntas = testActivo.preguntas.map(p => p._perm ? p : prepararPregunta(p));
   respuestasTest={}; preguntasMarcadas=new Set(); testFinalizado=false; testInicio=Date.now();
   tiempoPregunta=0; if(timerPregunta) clearInterval(timerPregunta);
   if (testActivo.tipo==='simulacro') { modoExamenGlobal=true; iniciarTimer(); }
@@ -675,6 +694,22 @@ window.guardarNota=async(el)=>{
   const pid=el.dataset.pid, txt=el.value;
   notasPorPregunta[pid]=txt;
   if(!modoVistaPrevia && pid) try{ await setDoc(doc(db,'alumnos',currentUser.uid,'notas',pid),{texto:txt,fecha:serverTimestamp()}); }catch(e){}
+};
+window.reportarPregunta = async () => {
+  if (!testActivo || modoVistaPrevia) return;
+  const p = testActivo.preguntas[testActivo.indice];
+  const motivo = prompt('¿Qué falla ves en esta pregunta? (respuesta mal marcada, errata, opción repetida…)\n\nPuedes dejarlo vacío y enviar igualmente:');
+  if (motivo === null) return;
+  try {
+    await addDoc(collection(db,'reportes'), {
+      preguntaId: p.id, temaId: p.temaId, temaNombre: testActivo.temaNombre,
+      enunciado: p.enunciado, respuestaCorrecta: p.opciones[p.correcta],
+      motivo: (motivo||'').trim(),
+      alumno: currentUser.displayName||'', email: currentUser.email||'', uid: currentUser.uid,
+      resuelto: false, fecha: serverTimestamp()
+    });
+    mostrarToast('¡Gracias! 🙏', 'Tu aviso ha llegado al profesor. Lo revisará pronto.');
+  } catch(e) { alert('No se pudo enviar el aviso. Inténtalo más tarde.'); }
 };
 window.verRespuestas=()=>{$('pantalla-resultado').style.display='none';testActivo.indice=0;renderTest();};
 window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;testFinalizado=false;pararTimer();salirModoTest();showAlumnoTab('inicio');renderInicio();};
@@ -834,6 +869,48 @@ window.showAdminTab=(tab)=>{
   document.querySelector(`.admin-tab-btn[data-tab="${tab}"]`)?.classList.add('active');
   document.querySelector(`.admin-tab[data-tab="${tab}"]`)?.classList.add('active');
   if(tab==='alumnos') cargarAdminAlumnos();
+  if(tab==='analisis') cargarReportes();
+};
+window.cargarReportes = async () => {
+  const cont = $('admin-reportes-lista'); if(!cont) return;
+  cont.innerHTML = '<p class="empty-msg">Cargando…</p>';
+  try {
+    const s = await getDocs(query(collection(db,'reportes'), orderBy('fecha','desc')));
+    if (!s.size) { cont.innerHTML = '<p class="empty-msg">No hay avisos. 👍</p>'; return; }
+    cont.innerHTML = s.docs.map(d => {
+      const r = d.data();
+      return `<div class="admin-tema-item" style="align-items:flex-start;flex-direction:column;gap:6px">
+        <div style="font-weight:600">${(r.enunciado||'').slice(0,140)}</div>
+        <div style="font-size:12px;color:var(--text2)">Tema: ${r.temaNombre||'—'} · Correcta guardada: <span style="color:#4ade80">${r.respuestaCorrecta||'—'}</span></div>
+        ${r.motivo?`<div style="font-size:13px;color:#ffb37a">💬 ${r.motivo}</div>`:''}
+        <div style="font-size:11px;color:var(--text3)">Reportado por ${r.alumno||r.email||'alumno'}</div>
+        <button class="btn-sm" style="background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:#4ade80" onclick="resolverReporte('${d.id}')">✓ Marcar resuelto</button>
+      </div>`;
+    }).join('');
+  } catch(e) { cont.innerHTML = '<p class="empty-msg">No se pudo cargar (¿faltan las reglas de Firebase para «reportes»?).</p>'; }
+};
+window.resolverReporte = async (id) => {
+  if(!confirm('¿Marcar este aviso como resuelto? (se eliminará de la lista)')) return;
+  try { await deleteDoc(doc(db,'reportes',id)); cargarReportes(); } catch(e){ alert('No se pudo eliminar.'); }
+};
+window.analizarFalladas = async () => {
+  const cont = $('admin-falladas-global'); if(!cont) return;
+  cont.innerHTML = '<p class="empty-msg">Analizando…</p>';
+  try {
+    const alumnosSnap = await getDocs(collection(db,'alumnos'));
+    const conteo = {};
+    for (const a of alumnosSnap.docs) {
+      const fs = await getDocs(collection(db,'alumnos',a.id,'falladas'));
+      fs.docs.forEach(fd => { conteo[fd.id] = (conteo[fd.id]||0) + 1; });
+    }
+    const arr = Object.entries(conteo).map(([pid,n]) => ({pid,n})).sort((a,b)=>b.n-a.n).slice(0,25);
+    if (!arr.length) { cont.innerHTML = '<p class="empty-msg">Aún no hay falladas registradas.</p>'; return; }
+    cont.innerHTML = arr.map(x => {
+      const p = preguntas.find(q => q.id === x.pid);
+      const txt = p ? p.enunciado : '(pregunta eliminada)';
+      return `<div class="admin-tema-item"><div style="flex:1">${(txt||'').slice(0,140)}</div><div style="color:#f87171;font-weight:700;white-space:nowrap;margin-left:10px">${x.n} alumno(s)</div></div>`;
+    }).join('');
+  } catch(e) { cont.innerHTML = '<p class="empty-msg">Error al analizar.</p>'; }
 };
 </script>
 
@@ -1277,6 +1354,9 @@ body {
           <div style="margin:10px 0">
             <textarea id="nota-pregunta" placeholder="📝 Escribe aquí tus notas para esta pregunta..." onblur="guardarNota(this)" rows="2" style="width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#f1f5f9;padding:10px 14px;font-size:13px;font-family:'Outfit',sans-serif;resize:vertical;outline:none;transition:border-color 0.2s" onfocus="this.style.borderColor='#f0c040'" onblur="this.style.borderColor='rgba(255,255,255,0.1)';guardarNota(this)"></textarea>
           </div>
+          <div style="text-align:right;margin:-4px 0 8px">
+            <button onclick="reportarPregunta()" style="background:none;border:none;color:#94a3b8;font-size:12px;cursor:pointer;font-family:'Outfit',sans-serif;text-decoration:underline">⚠️ Reportar error en esta pregunta</button>
+          </div>
           <div class="test-nav">
             <button class="btn-nav" id="btn-anterior" onclick="anterior()">← Anterior</button>
             <button class="btn-nav" id="btn-marcar" onclick="toggleMarcar()">🚩 Marcar</button>
@@ -1333,6 +1413,7 @@ body {
     <button class="tab-btn admin-tab-btn" data-tab="bloques" onclick="showAdminTab('bloques')">📁 Bloques</button>
     <button class="tab-btn admin-tab-btn" data-tab="temas" onclick="showAdminTab('temas')">📚 Temas y preguntas</button>
     <button class="tab-btn admin-tab-btn" data-tab="alumnos" onclick="showAdminTab('alumnos')">👥 Alumnos</button>
+    <button class="tab-btn admin-tab-btn" data-tab="analisis" onclick="showAdminTab('analisis')">🚩 Reportes y análisis</button>
   </div>
   <div class="content">
     <div class="tab-panel admin-tab active" data-tab="resumen">
@@ -1386,6 +1467,17 @@ body {
         <div class="card-title">👥 Gestión de alumnos</div>
         <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Los alumnos que se registren aparecerán primero como <strong>pendientes</strong>. Actívalos para que puedan acceder.</p>
         <div id="admin-alumnos-lista"></div>
+      </div>
+    </div>
+    <div class="tab-panel admin-tab" data-tab="analisis">
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title" style="justify-content:space-between"><span>🚩 Errores reportados por alumnos</span><button class="btn-sm btn-primary" onclick="cargarReportes()">🔄 Actualizar</button></div>
+        <div id="admin-reportes-lista"><p class="empty-msg">Pulsa "Actualizar" para ver los avisos de los alumnos.</p></div>
+      </div>
+      <div class="card">
+        <div class="card-title" style="justify-content:space-between"><span>❌ Preguntas que más fallan los alumnos</span><button class="btn-sm btn-primary" onclick="analizarFalladas()">📊 Analizar</button></div>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:12px">Preguntas que ahora mismo tienen falladas más alumnos. Útil para detectar preguntas mal puestas o temas difíciles.</p>
+        <div id="admin-falladas-global"><p class="empty-msg">Pulsa "Analizar" para calcular (puede tardar unos segundos si hay muchos alumnos).</p></div>
       </div>
     </div>
   </div>
