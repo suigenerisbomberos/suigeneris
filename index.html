@@ -50,6 +50,60 @@ function getDeviceId() {
   if (!id) { id = 'dev_' + Math.random().toString(36).substr(2,12) + '_' + Date.now(); localStorage.setItem('sg_device_id', id); }
   return id;
 }
+// ─── TEST EN CURSO (guardar y continuar) ──────────────────────
+function _testKey() { return 'sg_test_encurso_' + (currentUser ? currentUser.uid : 'anon'); }
+function leerTestEnCurso() { try { const r = localStorage.getItem(_testKey()); return r ? JSON.parse(r) : null; } catch(e) { return null; } }
+function borrarTestEnCurso() { try { localStorage.removeItem(_testKey()); } catch(e){} }
+function guardarTestEnCurso() {
+  if (!testActivo || testFinalizado || modoVistaPrevia) return;
+  if (testActivo.tipo === 'simulacro') return; // un examen cronometrado no se pausa
+  try {
+    localStorage.setItem(_testKey(), JSON.stringify({
+      tipo: testActivo.tipo, temaId: testActivo.temaId, temaNombre: testActivo.temaNombre,
+      ordenIds: testActivo.preguntas.map(p=>p.id),
+      indice: testActivo.indice,
+      respuestas: respuestasTest,
+      marcadas: [...preguntasMarcadas],
+      modoExamen: modoExamenGlobal,
+      guardarProgreso: !!testActivo.guardarProgreso,
+      ts: Date.now()
+    }));
+  } catch(e) {}
+  actualizarReanudarUI();
+}
+function puedeEmpezarNuevo() {
+  const g = leerTestEnCurso();
+  if (!g) return true;
+  return confirm(`Tienes un test a medias: "${g.temaNombre}" (pregunta ${(g.indice||0)+1} de ${g.ordenIds.length}). Si empiezas otro, perderás ese avance. ¿Seguro que quieres empezar uno nuevo?`);
+}
+function actualizarReanudarUI() {
+  const g = leerTestEnCurso();
+  const activo = g && g.ordenIds && g.ordenIds.length;
+  const txt = activo ? `"${g.temaNombre}" · vas por la pregunta ${(g.indice||0)+1} de ${g.ordenIds.length}` : '';
+  [['reanudar-banner','reanudar-info'],['reanudar-box','reanudar-box-info']].forEach(([bId,iId])=>{
+    const b = document.getElementById(bId); if (!b) return;
+    b.style.display = activo ? 'block' : 'none';
+    const i = document.getElementById(iId); if (i) i.textContent = txt;
+  });
+}
+window.reanudarTestEnCurso = () => {
+  const g = leerTestEnCurso();
+  if (!g) { actualizarReanudarUI(); return; }
+  const ps = g.ordenIds.map(id => preguntas.find(p=>p.id===id)).filter(Boolean);
+  if (!ps.length || ps.length !== g.ordenIds.length) {
+    borrarTestEnCurso(); actualizarReanudarUI();
+    return alert('El test guardado ya no está disponible (cambiaron las preguntas del tema). Empieza uno nuevo.');
+  }
+  testActivo = { tipo:g.tipo, temaId:g.temaId, temaNombre:g.temaNombre, preguntas:ps,
+    indice: Math.min(g.indice||0, ps.length-1), guardarProgreso: !!g.guardarProgreso };
+  respuestasTest = g.respuestas || {};
+  preguntasMarcadas = new Set(g.marcadas || []);
+  modoExamenGlobal = !!g.modoExamen; testFinalizado = false; testInicio = Date.now();
+  const btn = document.getElementById('btn-modo-examen');
+  if (btn) { btn.textContent = modoExamenGlobal ? '📖 Modo estudio' : '📝 Modo examen'; btn.classList.toggle('active-examen', modoExamenGlobal); }
+  showAlumnoTab('test'); renderTest(); iniciarTimerPregunta();
+};
+
 async function registrarDispositivo(uid) {
   const deviceId = getDeviceId();
   const ref = doc(db,'alumnos',uid,'dispositivos',deviceId);
@@ -449,6 +503,12 @@ window.iniciarTestTema = async (temaId) => {
   const tema = temas.find(t=>t.id===temaId); if (!tema) return;
   const todasPs = preguntas.filter(p=>p.temaId===temaId);
   if (!todasPs.length) return alert('Este tema aún no tiene preguntas');
+  // ¿Test de ESTE mismo tema a medias? -> continuar tal cual (respuestas incluidas)
+  const guardado = leerTestEnCurso();
+  if (guardado && guardado.tipo==='tema' && guardado.temaId===temaId) return reanudarTestEnCurso();
+  // ¿Otro test a medias? -> avisar antes de descartarlo
+  if (!puedeEmpezarNuevo()) return;
+  borrarTestEnCurso();
   let ordenIds = null;
   let indiceInicio = 0;
   const progreso = await cargarProgresaTema(temaId);
@@ -498,6 +558,8 @@ window.confirmarTestMixto = () => {
   if (!temaIds.length) return alert('Selecciona al menos un tema');
   const ps = preguntas.filter(p=>temaIds.includes(p.temaId));
   if (!ps.length) return alert('Los temas seleccionados no tienen preguntas');
+  if (!puedeEmpezarNuevo()) return;
+  borrarTestEnCurso();
   const shuffled = [...ps].sort(()=>Math.random()-.5);
   const nombresCortos = temaIds.length === temas.length ? 'Todos los temas' : `${temaIds.length} temas seleccionados`;
   testActivo = { tipo:'mixto', temaId:'mixto', temaNombre:`Test mixto — ${nombresCortos}`, preguntas:shuffled, indice:0 };
@@ -527,6 +589,8 @@ window.iniciarTestFalladas = async () => {
     const ids = s.docs.map(d=>d.id);
     const ps = preguntas.filter(p=>ids.includes(p.id));
     if (!ps.length) return alert('No tienes preguntas falladas para repasar 👏');
+    if (!puedeEmpezarNuevo()) return;
+    borrarTestEnCurso();
     const shuffled = [...ps].sort(()=>Math.random()-.5).slice(0,Math.min(ps.length,20));
     testActivo = { tipo:'falladas', temaId:'falladas', temaNombre:'Repaso de falladas', preguntas:shuffled, indice:0 };
     iniciarTestComun();
@@ -551,6 +615,7 @@ window.toggleModoExamen=()=>{
   btn.textContent=modoExamenGlobal?'📖 Modo estudio':'📝 Modo examen';
   btn.classList.toggle('active-examen', modoExamenGlobal);
   renderTest();
+  guardarTestEnCurso();
 };
 
 function iniciarTimer() {
@@ -588,28 +653,31 @@ function renderTest() {
   $('test-mapa').innerHTML='';
 }
 
-window.responder=(i)=>{if(!testActivo||testFinalizado)return;const p=testActivo.preguntas[testActivo.indice];if(respuestasTest[p.id]!==undefined&&!testActivo.modoExamen)return;respuestasTest[p.id]=i;renderTest();};
+window.responder=(i)=>{if(!testActivo||testFinalizado)return;const p=testActivo.preguntas[testActivo.indice];if(respuestasTest[p.id]!==undefined&&!testActivo.modoExamen)return;respuestasTest[p.id]=i;renderTest();guardarTestEnCurso();};
 window.siguiente=()=>{
   if(testActivo&&testActivo.indice<testActivo.preguntas.length-1){
     testActivo.indice++;
     renderTest(); iniciarTimerPregunta();
     if(testActivo.guardarProgreso) guardarProgresaTema(testActivo.temaId, testActivo.preguntas.map(p=>p.id), testActivo.indice);
+    guardarTestEnCurso();
   }
 };
-window.anterior=()=>{if(testActivo&&testActivo.indice>0){testActivo.indice--;renderTest();iniciarTimerPregunta();}};
+window.anterior=()=>{if(testActivo&&testActivo.indice>0){testActivo.indice--;renderTest();iniciarTimerPregunta();guardarTestEnCurso();}};
 window.irPregunta=(i)=>{
   if(testActivo){
     testActivo.indice=i; renderTest();
     if(testActivo.guardarProgreso) guardarProgresaTema(testActivo.temaId, testActivo.preguntas.map(p=>p.id), i);
+    guardarTestEnCurso();
   }
 };
-window.toggleMarcar=()=>{const p=testActivo.preguntas[testActivo.indice];if(preguntasMarcadas.has(p.id))preguntasMarcadas.delete(p.id);else preguntasMarcadas.add(p.id);renderTest();};
+window.toggleMarcar=()=>{const p=testActivo.preguntas[testActivo.indice];if(preguntasMarcadas.has(p.id))preguntasMarcadas.delete(p.id);else preguntasMarcadas.add(p.id);renderTest();guardarTestEnCurso();};
 
 window.finalizarTest = async () => {
   if (!testActivo||testFinalizado) return;
   const sinR=testActivo.preguntas.filter(p=>respuestasTest[p.id]===undefined).length;
   if(sinR>0&&!confirm(`Te quedan ${sinR} preguntas sin responder. ¿Finalizar?`)) return;
   pararTimer(); if(timerPregunta){clearInterval(timerPregunta);timerPregunta=null;} testFinalizado=true;
+  borrarTestEnCurso(); actualizarReanudarUI();
   const ps=testActivo.preguntas, aciertos=ps.filter(p=>respuestasTest[p.id]===p.correcta).length;
   const total=ps.length, pct=Math.round((aciertos/total)*100);
   const puntos=aciertos*10+(testActivo.tipo==='simulacro'?50:0);
@@ -645,7 +713,7 @@ window.guardarNota=async(el)=>{
   if(!modoVistaPrevia && pid) try{ await setDoc(doc(db,'alumnos',currentUser.uid,'notas',pid),{texto:txt,fecha:serverTimestamp()}); }catch(e){}
 };
 window.verRespuestas=()=>{$('pantalla-resultado').style.display='none';testActivo.indice=0;renderTest();};
-window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;pararTimer();showAlumnoTab('temas');renderInicio();};
+window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;pararTimer();borrarTestEnCurso();actualizarReanudarUI();showAlumnoTab('temas');renderInicio();};
 
 window.showAlumnoTab=(tab)=>{
   document.querySelectorAll('.alumno-tab-btn').forEach(b=>b.classList.remove('active'));
@@ -656,6 +724,7 @@ window.showAlumnoTab=(tab)=>{
   if(tab==='progreso') renderProgreso();
   if(tab==='ranking') cargarRanking();
   if(tab==='test') renderTest();
+  if(tab==='inicio'||tab==='test') actualizarReanudarUI();
 };
 
 async function cargarAdmin() {
@@ -1172,6 +1241,11 @@ body {
         <div class="stat-card"><div class="stat-num" id="stat-puntos">0</div><div class="stat-label">Puntos</div></div>
         <div class="stat-card"><div class="stat-num" id="stat-logros">0/0</div><div class="stat-label">Logros</div></div>
       </div>
+      <div id="reanudar-banner" style="display:none;margin-bottom:18px;background:linear-gradient(135deg,rgba(212,80,10,0.18),rgba(212,80,10,0.08));border:1px solid rgba(212,80,10,0.45);border-radius:14px;padding:16px 18px">
+        <div style="font-size:15px;font-weight:700;color:#f1f5f9;margin-bottom:4px">▶ Tienes un test a medias</div>
+        <div id="reanudar-info" style="font-size:13px;color:var(--text2);margin-bottom:12px"></div>
+        <button class="btn-nav primary" onclick="reanudarTestEnCurso()" style="width:100%">Continuar donde lo dejé</button>
+      </div>
       <div class="card" style="margin-bottom:18px">
         <div class="card-title">⚡ Modos de test</div>
         <div class="modos-grid">
@@ -1191,6 +1265,11 @@ body {
     <div class="tab-panel alumno-tab" data-tab="test">
       <div class="test-container">
         <div id="no-test" style="text-align:center;padding:50px 20px;color:var(--text2)">
+          <div id="reanudar-box" style="display:none;text-align:left;margin-bottom:24px;background:linear-gradient(135deg,rgba(212,80,10,0.18),rgba(212,80,10,0.08));border:1px solid rgba(212,80,10,0.45);border-radius:14px;padding:16px 18px">
+            <div style="font-size:15px;font-weight:700;color:#f1f5f9;margin-bottom:4px">▶ Tienes un test a medias</div>
+            <div id="reanudar-box-info" style="font-size:13px;color:var(--text2);margin-bottom:12px"></div>
+            <button class="btn-nav primary" onclick="reanudarTestEnCurso()" style="width:100%">Continuar donde lo dejé</button>
+          </div>
           <div style="font-size:46px;margin-bottom:12px">🎯</div>
           <p style="font-size:15px">Selecciona un modo de test desde Inicio o un tema concreto</p>
         </div>

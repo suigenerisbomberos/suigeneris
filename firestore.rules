@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Ayudantes ────────────────────────────────────────────────
+    function estaLogueado() {
+      return request.auth != null;
+    }
+    function esAdmin() {
+      return request.auth != null &&
+             request.auth.token.email in [
+               'josecarlos099@hotmail.com',
+               'miguelnl83@gmail.com'
+             ];
+    }
+
+    // ── Contenido del curso ──────────────────────────────────────
+    // Lo LEE cualquier alumno con sesión iniciada.
+    // Solo un ADMIN puede crear/editar/borrar bloques, temas y preguntas.
+    match /bloques/{bloqueId} {
+      allow read:  if estaLogueado();
+      allow write: if esAdmin();
+    }
+    match /temas/{temaId} {
+      allow read:  if estaLogueado();
+      allow write: if esAdmin();
+
+      match /preguntas/{preguntaId} {
+        allow read:  if estaLogueado();
+        allow write: if esAdmin();
+      }
+    }
+
+    // ── Fichas de alumnos ────────────────────────────────────────
+    match /alumnos/{uid} {
+      // Lectura abierta a cualquier logueado: es NECESARIO para el ranking,
+      // que consulta la lista de alumnos ordenada por puntos.
+      allow read: if estaLogueado();
+
+      // Cada alumno solo puede crear/editar SU PROPIA ficha. El admin, cualquiera.
+      allow create, update: if estaLogueado() && (request.auth.uid == uid || esAdmin());
+      allow delete: if esAdmin();
+
+      // Subcolecciones (historial, falladas, notas, dispositivos, progreso_temas):
+      // privadas. Solo el dueño de la ficha o un admin.
+      match /{documento=**} {
+        allow read, write: if estaLogueado() && (request.auth.uid == uid || esAdmin());
+      }
+    }
+  }
+}
