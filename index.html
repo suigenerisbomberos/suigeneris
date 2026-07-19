@@ -770,7 +770,7 @@ window.editarTema=async(id)=>{ const t=temas.find(x=>x.id===id); const opts=bloq
 window.eliminarTema=async(id)=>{ if(!confirm('¿Eliminar este tema y todas sus preguntas?'))return; const ps=await getDocs(collection(db,'temas',id,'preguntas')); for(const d of ps.docs)await deleteDoc(d.ref); await deleteDoc(doc(db,'temas',id)); await cargarTemas();await cargarTodasPreguntas(); renderAdminTemas();await renderAdminEstadisticas(); };
 
 let temaEditar=null;
-window.abrirGestorPreguntas=(id)=>{ temaEditar=temas.find(t=>t.id===id); if(!temaEditar)return; $('modal-tema-nombre').textContent=temaEditar.nombre; renderPreguntasModal(); limpiarFormPregunta(); $('modal-preguntas').style.display='flex'; };
+window.abrirGestorPreguntas=(id)=>{ temaEditar=temas.find(t=>t.id===id); if(!temaEditar)return; $('modal-tema-nombre').textContent=temaEditar.nombre; renderPreguntasModal(); limpiarFormPregunta(); resetImport(); $('modal-preguntas').style.display='flex'; };
 window.cerrarModal=()=>{ $('modal-preguntas').style.display='none'; temaEditar=null; };
 window.cerrarModalSim=()=>{ $('modal-simulacro').style.display='none'; };
 
@@ -790,6 +790,63 @@ window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim
 window.editarPregunta=(id)=>{ const p=preguntas.find(pr=>pr.id===id); if(!p)return; $('preg-edit-id').value=p.id; $('preg-enunciado').value=p.enunciado; p.opciones.forEach((op,i)=>$(`preg-op${i}`).value=op); $('preg-correcta').value=p.correcta; $('preg-explicacion').value=p.explicacion||''; $('btn-guardar-preg').textContent='💾 Actualizar pregunta'; $('preg-enunciado').focus(); };
 window.eliminarPregunta=async(id)=>{ if(!confirm('¿Eliminar esta pregunta?'))return; await deleteDoc(doc(db,'temas',temaEditar.id,'preguntas',id)); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
 function limpiarFormPregunta(){ $('preg-edit-id').value=''; $('preg-enunciado').value=''; ['preg-op0','preg-op1','preg-op2','preg-op3'].forEach(id=>$(id).value=''); $('preg-correcta').value=''; $('preg-explicacion').value=''; $('btn-guardar-preg').textContent='➕ Añadir pregunta'; }
+
+// ─── IMPORTADOR DE EXÁMENES (hoja de corrección de la skill) ───
+let _preguntasImportadas = [];
+function _escaparHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function resetImport(){ _preguntasImportadas=[]; const f=$('import-file'); if(f)f.value=''; const t=$('import-texto'); if(t)t.value=''; const pv=$('import-preview'); if(pv)pv.innerHTML=''; const b=$('btn-importar'); if(b)b.style.display='none'; }
+async function _docxATexto(file){
+  const mod = await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm');
+  const JSZip = mod.default || mod;
+  const zip = await JSZip.loadAsync(file);
+  const xml = await zip.file('word/document.xml').async('string');
+  const conSaltos = xml.replace(/<\/w:p>/g,'\n');
+  const sinTags = conSaltos.replace(/<[^>]+>/g,'');
+  return sinTags.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#0?39;|&apos;/g,"'");
+}
+function _parsearExamen(texto){
+  const lineas = texto.split('\n').map(l=>l.replace(/\s+$/,''));
+  const LETRAS={A:0,B:1,C:2,D:3}; const preguntas=[]; let act=null;
+  const cerrar=()=>{ if(!act)return; const partes=[]; if(act.correctaTxt)partes.push(act.correctaTxt); act.razones.forEach(r=>partes.push(r)); act.explicacion=partes.join('<br>'); delete act.correctaTxt; delete act.razones; preguntas.push(act); act=null; };
+  for(const raw of lineas){
+    const l=raw.trim(); if(!l)continue; let m;
+    if((m=l.match(/^(\d+)\.\s+(.*)$/)) && !/^->/.test(l)){
+      cerrar(); let enun=m[2];
+      const md=enun.match(/\s*\[(F[ÁA]CIL|MEDIA|DIF[ÍI]CIL)\]\s*$/i); if(md) enun=enun.slice(0,md.index).trim();
+      act={ enunciado:enun, opciones:[], correcta:-1, correctaTxt:'', razones:[] }; continue;
+    }
+    if(act && (m=l.match(/^(OK|X)\s+([A-D])\)\s*(.+)$/i))){ const idx=LETRAS[m[2].toUpperCase()]; act.opciones[idx]=m[3].trim(); if(m[1].toUpperCase()==='OK') act.correcta=idx; continue; }
+    if(act && (m=l.match(/^CORRECTA:\s*(.+)$/i))){ act.correctaTxt='✔ '+_escaparHtml(m[1].trim()); continue; }
+    if(act && (m=l.match(/^->\s*([A-D]):\s*(.+)$/i))){ act.razones.push('✗ '+m[1].toUpperCase()+') '+_escaparHtml(m[2].trim())); continue; }
+  }
+  cerrar(); return preguntas;
+}
+window.analizarImport = async () => {
+  const cont=$('import-preview'), btnImp=$('btn-importar');
+  let texto=$('import-texto').value.trim(); const file=$('import-file').files[0];
+  if(file){ cont.innerHTML='<p style="color:var(--text2)">Leyendo el archivo…</p>'; try{ texto=await _docxATexto(file); }catch(e){ cont.innerHTML='<p style="color:#f87171">No pude leer el .docx (¿sin conexión?). Prueba a pegar el texto.</p>'; return; } }
+  if(!texto){ cont.innerHTML='<p style="color:#f87171">Sube un .docx o pega el texto del examen.</p>'; return; }
+  const pregs=_parsearExamen(texto);
+  _preguntasImportadas=pregs.filter(p=>p.enunciado && p.opciones.filter(Boolean).length===4 && p.correcta>=0);
+  const desc=pregs.length-_preguntasImportadas.length;
+  if(!_preguntasImportadas.length){ cont.innerHTML='<p style="color:#f87171">No se detectaron preguntas válidas. ¿El archivo es la hoja de corrección con el formato de la skill?</p>'; btnImp.style.display='none'; return; }
+  cont.innerHTML=`<div style="margin-bottom:10px;color:#4ade80;font-weight:700">✔ ${_preguntasImportadas.length} preguntas detectadas${desc?` · ⚠️ ${desc} descartadas (formato incompleto)`:''}</div>`+
+    _preguntasImportadas.slice(0,4).map((p,i)=>`<div style="border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;margin-bottom:8px"><div style="font-weight:600;font-size:13px;margin-bottom:4px">${i+1}. ${_escaparHtml(p.enunciado)}</div>${p.opciones.map((o,j)=>`<div style="font-size:12px;color:${j===p.correcta?'#4ade80':'var(--text2)'}">${'ABCD'[j]}) ${_escaparHtml(o)}${j===p.correcta?' ✔':''}</div>`).join('')}</div>`).join('')+
+    (_preguntasImportadas.length>4?`<div style="color:var(--text2);font-size:12px">…y ${_preguntasImportadas.length-4} preguntas más</div>`:'');
+  btnImp.style.display='block'; btnImp.textContent=`⬇️ Importar ${_preguntasImportadas.length} preguntas a "${temaEditar.nombre}"`;
+};
+window.confirmarImport = async () => {
+  if(!_preguntasImportadas.length || !temaEditar) return;
+  if(!confirm(`Se AÑADIRÁN ${_preguntasImportadas.length} preguntas a "${temaEditar.nombre}". Las que ya existan NO se borran. ¿Continuar?`)) return;
+  const btn=$('btn-importar'); btn.disabled=true; let ok=0;
+  for(const p of _preguntasImportadas){
+    try{ await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),{ enunciado:p.enunciado, opciones:p.opciones, correcta:p.correcta, explicacion:p.explicacion||'', creadaEn:serverTimestamp() }); ok++; btn.textContent=`Importando… ${ok}/${_preguntasImportadas.length}`; }catch(e){}
+  }
+  btn.disabled=false; _preguntasImportadas=[];
+  $('import-preview').innerHTML=`<p style="color:#4ade80;font-weight:700">✔ ${ok} preguntas importadas a "${temaEditar.nombre}".</p>`;
+  $('import-file').value=''; $('import-texto').value=''; btn.style.display='none';
+  await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas();
+};
 
 window.cargarAdminAlumnos = async () => {
   try {
@@ -1489,6 +1546,17 @@ body {
     <div class="modal-header">
       <h2>✏️ Preguntas — <span id="modal-tema-nombre" style="color:var(--gold)"></span></h2>
       <button class="btn-cerrar" onclick="cerrarModal()">✕</button>
+    </div>
+    <div style="background:rgba(212,80,10,0.08);border:1px solid rgba(212,80,10,0.3);border-radius:12px;padding:14px;margin-bottom:18px">
+      <div style="font-weight:700;margin-bottom:6px">📥 Importar examen a este tema</div>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Sube la <strong>hoja de corrección (.docx)</strong> generada con la skill (o pega su texto). Verás una vista previa antes de importar. <strong>No se borra</strong> ninguna pregunta que ya tengas.</p>
+      <input type="file" id="import-file" accept=".docx" style="font-size:12px;margin-bottom:8px;color:var(--text2)">
+      <details style="margin-bottom:8px"><summary style="font-size:12px;color:var(--text2);cursor:pointer">…o pegar el texto a mano</summary>
+        <textarea id="import-texto" rows="4" placeholder="Pega aquí el texto de la hoja de corrección" style="width:100%;margin-top:6px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#f1f5f9;padding:8px;font-size:12px;font-family:monospace"></textarea>
+      </details>
+      <button class="btn-add" onclick="analizarImport()">🔍 Analizar</button>
+      <div id="import-preview" style="margin-top:12px;max-height:280px;overflow-y:auto"></div>
+      <button class="btn-add" id="btn-importar" onclick="confirmarImport()" style="display:none;width:100%;margin-top:10px;background:#D4500A;border-color:#D4500A">⬇️ Importar preguntas</button>
     </div>
     <div class="modal-grid">
       <div class="form-preg">
