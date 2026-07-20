@@ -282,7 +282,7 @@ window.activarVistaPrevia = async () => {
     simulacrosRealizados: 0
   };
   showScreen('alumno');
-  await cargarBloques(); await cargarTemas(); await cargarTodasPreguntas();
+  await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
   renderInicio(); renderTemas(); renderProgreso();
   showAlumnoTab('inicio');
   mostrarToast('👁️ Modo Vista Previa', 'Estás viendo la plataforma como un alumno');
@@ -301,16 +301,18 @@ async function cargarTemas() {
   try { const s = await getDocs(query(collection(db,'temas'),orderBy('orden'))); temas = s.docs.map(d=>({id:d.id,...d.data()})); } catch(e) { temas=[]; }
 }
 async function cargarTodasPreguntas() {
-  preguntas = [];
-  for (const t of temas) {
-    try { const s = await getDocs(collection(db,'temas',t.id,'preguntas')); preguntas.push(...s.docs.map(d=>({id:d.id,temaId:t.id,...d.data()}))); } catch(e) {}
-  }
+  // Se piden las preguntas de TODOS los temas a la vez (en paralelo), no una a una.
+  const resultados = await Promise.all(temas.map(async t => {
+    try { const s = await getDocs(collection(db,'temas',t.id,'preguntas')); return s.docs.map(d=>({id:d.id,temaId:t.id,...d.data()})); }
+    catch(e) { return []; }
+  }));
+  preguntas = resultados.flat();
 }
 
 async function cargarAlumno() {
   $('alumno-nombre').textContent = currentUser.displayName || 'Alumno';
   $('btn-salir-preview').style.display = modoVistaPrevia ? 'flex' : 'none';
-  await cargarBloques(); await cargarTemas(); await cargarTodasPreguntas();
+  await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
   if (!modoVistaPrevia) {
     await cargarAlumnoData();
     await actualizarRacha();
@@ -728,7 +730,7 @@ window.showAlumnoTab=(tab)=>{
 
 async function cargarAdmin() {
   $('admin-email').textContent = currentUser.email;
-  await cargarBloques(); await cargarTemas(); await cargarTodasPreguntas();
+  await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
   renderAdminBloques(); renderAdminTemas(); await renderAdminEstadisticas();
 }
 
