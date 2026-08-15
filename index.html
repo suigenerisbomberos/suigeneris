@@ -176,7 +176,9 @@ onAuthStateChanged(auth, async user => {
     } else {
       if (!isAdmin) {
         const snap = await getDoc(doc(db, 'alumnos', user.uid));
-        if (snap.exists() && snap.data().activado === false) {
+        // Solo entra quien esté ACTIVADO por un admin. Cualquier otro caso
+        // (ficha aún no creada, activado false o ausente) → pantalla de espera.
+        if (!snap.exists() || snap.data().activado !== true) {
           showScreen('pendiente');
           $('pendiente-nombre').textContent = user.displayName || user.email;
           return;
