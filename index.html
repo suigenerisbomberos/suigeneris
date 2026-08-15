@@ -58,6 +58,40 @@ function _testKeyBase() { return 'sg_test_' + (currentUser ? currentUser.uid : '
 function _testKeyFor(id) { return _testKeyBase() + id; }
 function leerTest(id) { try { const r = localStorage.getItem(_testKeyFor(id)); return r ? JSON.parse(r) : null; } catch(e) { return null; } }
 function borrarTest(id) { try { localStorage.removeItem(_testKeyFor(id)); } catch(e){} }
+// ── Sincronización del progreso ENTRE DISPOSITIVOS (Firebase) ──
+// El avance se guarda al instante en el propio dispositivo (localStorage) y,
+// además, se copia a Firebase para que el alumno lo recupere en otro dispositivo.
+let _syncTimers = {};
+function sincronizarProgresoRemoto(id) {
+  if (modoVistaPrevia || !currentUser) return;
+  clearTimeout(_syncTimers[id]);
+  _syncTimers[id] = setTimeout(() => {
+    if (!currentUser) return; // por si ha cerrado sesión mientras tanto
+    const g = leerTest(id); if (!g) return;
+    setDoc(doc(db,'alumnos',currentUser.uid,'progreso',id), { temaId:id, ts:g.ts||Date.now(), json:JSON.stringify(g) }).catch(()=>{});
+  }, 2000);
+}
+function borrarProgresoRemoto(id) {
+  if (!currentUser) return;
+  clearTimeout(_syncTimers[id]);
+  deleteDoc(doc(db,'alumnos',currentUser.uid,'progreso',id)).catch(()=>{});
+}
+async function cargarProgresoRemoto() {
+  if (modoVistaPrevia || !currentUser) return;
+  try {
+    const s = await getDocs(collection(db,'alumnos',currentUser.uid,'progreso'));
+    s.docs.forEach(d => {
+      const meta = d.data(); if (!meta || !meta.json) return;
+      let remoto; try { remoto = JSON.parse(meta.json); } catch(e){ return; }
+      if (!remoto.temaId || !remoto.ordenIds) return;
+      const local = leerTest(remoto.temaId);
+      // Solo traemos el remoto si es más nuevo que lo que hay en este dispositivo
+      if (!local || (remoto.ts||0) > (local.ts||0)) {
+        try { localStorage.setItem(_testKeyFor(remoto.temaId), meta.json); } catch(e){}
+      }
+    });
+  } catch(e) {}
+}
 function temasEnCurso() {
   const out = {}; const base = _testKeyBase();
   try {
@@ -100,6 +134,7 @@ function guardarTestEnCurso() {
       ts: Date.now()
     }));
   } catch(e) {}
+  sincronizarProgresoRemoto(testActivo.temaId);
 }
 window.reanudarTest = (id) => {
   const g = leerTest(id);
@@ -196,6 +231,9 @@ onAuthStateChanged(auth, async user => {
     }
   } else {
     currentUser = null; isAdmin = false; modoVistaPrevia = false; alumnoData = null;
+    testActivo = null; testFinalizado = false;
+    pararTimer(); if (timerPregunta) { clearInterval(timerPregunta); timerPregunta = null; }
+    salirModoTest();
     showScreen('auth');
   }
 });
@@ -250,7 +288,7 @@ window.cerrarSesion = async () => {
 window.toggleAuthForm = () => {
   const r = $('form-registro'), l = $('form-login');
   if (r.style.display === 'none') { r.style.display = ''; l.style.display = 'none'; }
-  else { r.style.display = 'none'; l.style = ''; }
+  else { r.style.display = 'none'; l.style.display = ''; }
 };
 
 function showError(id, msg) {
@@ -316,11 +354,12 @@ async function cargarAlumno() {
   $('btn-salir-preview').style.display = modoVistaPrevia ? 'flex' : 'none';
   await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
   if (!modoVistaPrevia) {
-    await cargarAlumnoData();
-    await actualizarRacha();
-    await comprobarLogros();
-    // Cargar notas guardadas
+    // Cada carga va protegida: si una falla, la app carga igualmente (no se queda en blanco).
+    try { await cargarAlumnoData(); } catch(e){}
+    try { await actualizarRacha(); } catch(e){}
+    try { await comprobarLogros(); } catch(e){}
     try { const ns=await getDocs(collection(db,'alumnos',currentUser.uid,'notas')); ns.docs.forEach(d=>{ notasPorPregunta[d.id]=d.data().texto||''; }); } catch(e){}
+    try { await cargarProgresoRemoto(); } catch(e){} // progreso de test desde otros dispositivos
   }
   renderInicio(); renderTemas(); renderProgreso();
   showAlumnoTab('inicio');
@@ -668,30 +707,37 @@ window.finalizarTest = async () => {
   const sinR=testActivo.preguntas.filter(p=>respuestasTest[p.id]===undefined).length;
   if(sinR>0&&!confirm(`Te quedan ${sinR} preguntas sin responder. ¿Finalizar?`)) return;
   pararTimer(); if(timerPregunta){clearInterval(timerPregunta);timerPregunta=null;} testFinalizado=true;
-  borrarTest(testActivo.temaId); // al terminar, ese tema vuelve a empezar de cero
   const ps=testActivo.preguntas, aciertos=ps.filter(p=>respuestasTest[p.id]===p.correcta).length;
   const total=ps.length, pct=Math.round((aciertos/total)*100);
   const puntos=aciertos*10+(testActivo.tipo==='simulacro'?50:0);
-  if (!modoVistaPrevia) {
-    await addDoc(collection(db,'alumnos',currentUser.uid,'historial'),{
-      temaId:testActivo.temaId,temaNombre:testActivo.temaNombre,tipo:testActivo.tipo,
-      aciertos,total,porcentaje:pct,tiempoSegundos:Math.round((Date.now()-testInicio)/1000),fecha:serverTimestamp()
-    });
-    const updates={'estadisticas.testsRealizados':increment(1),'estadisticas.totalPreguntas':increment(total),'estadisticas.totalAciertos':increment(aciertos),'estadisticas.puntos':increment(puntos)};
-    if(testActivo.tipo==='simulacro') updates.simulacrosRealizados=increment(1);
-    await updateDoc(doc(db,'alumnos',currentUser.uid),updates);
-    for(const p of ps){
-      if(respuestasTest[p.id]!==undefined&&respuestasTest[p.id]!==p.correcta) await setDoc(doc(db,'alumnos',currentUser.uid,'falladas',p.id),{temaId:p.temaId,fecha:serverTimestamp()});
-      else if(respuestasTest[p.id]===p.correcta) try{await deleteDoc(doc(db,'alumnos',currentUser.uid,'falladas',p.id));}catch(e){}
-    }
-    await cargarAlumnoData(); await comprobarLogros();
-  }
+  const tipo=testActivo.tipo, temaId=testActivo.temaId, temaNombre=testActivo.temaNombre, segundos=Math.round((Date.now()-testInicio)/1000);
+  // 1) Mostrar el resultado YA (no depende de internet, así nunca se congela)
   $('resultado-titulo').textContent=pct>=70?'¡Buen trabajo! 🔥':pct>=50?'Puedes mejorar 💪':'A seguir practicando 📚';
   $('resultado-pct').textContent=pct+'%';
   $('resultado-pct').style.color=pct>=70?'#4ade80':pct>=50?'#ff7d33':'#f87171';
   $('resultado-detalle').innerHTML=`<strong>${aciertos}</strong> correctas de <strong>${total}</strong><br>+${puntos} puntos`;
   $('pantalla-resultado').style.display='flex';
   renderTest();
+  // 2) Guardar en SEGUNDO PLANO, en paralelo y con manejo de errores
+  if (modoVistaPrevia) { borrarTest(temaId); borrarProgresoRemoto(temaId); return; }
+  try {
+    const updates={'estadisticas.testsRealizados':increment(1),'estadisticas.totalPreguntas':increment(total),'estadisticas.totalAciertos':increment(aciertos),'estadisticas.puntos':increment(puntos)};
+    if(tipo==='simulacro') updates.simulacrosRealizados=increment(1);
+    const escrituras=[
+      addDoc(collection(db,'alumnos',currentUser.uid,'historial'),{ temaId,temaNombre,tipo,aciertos,total,porcentaje:pct,tiempoSegundos:segundos,fecha:serverTimestamp() }),
+      updateDoc(doc(db,'alumnos',currentUser.uid),updates)
+    ];
+    for(const p of ps){
+      if(respuestasTest[p.id]!==undefined&&respuestasTest[p.id]!==p.correcta) escrituras.push(setDoc(doc(db,'alumnos',currentUser.uid,'falladas',p.id),{temaId:p.temaId,fecha:serverTimestamp()}));
+      else if(respuestasTest[p.id]===p.correcta) escrituras.push(deleteDoc(doc(db,'alumnos',currentUser.uid,'falladas',p.id)).catch(()=>{}));
+    }
+    await Promise.all(escrituras);
+    borrarTest(temaId); borrarProgresoRemoto(temaId); // limpiar solo tras guardar bien
+    await cargarAlumnoData(); await comprobarLogros();
+    renderInicio();
+  } catch(e) {
+    mostrarToast('⚠️ Sin conexión', 'Tu resultado se ve, pero no se pudo guardar. Revisa tu internet.');
+  }
 };
 
 window.guardarNota=async(el)=>{
