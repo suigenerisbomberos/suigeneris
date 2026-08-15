@@ -13,29 +13,36 @@ service cloud.firestore {
                'miguelnl83@gmail.com'
              ];
     }
+    // Comprueba en la base de datos que el alumno está ACTIVADO por un admin.
+    function estaActivado() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/alumnos/$(request.auth.uid))
+        && get(/databases/$(database)/documents/alumnos/$(request.auth.uid)).data.activado == true;
+    }
 
     // ── Contenido del curso ──────────────────────────────────────
-    // Lo LEE cualquier alumno con sesión iniciada.
-    // Solo un ADMIN puede crear/editar/borrar bloques, temas y preguntas.
+    // Lo LEE solo un alumno ACTIVADO (o un admin). Un registrado sin activar
+    // NO puede ni leer los temas/preguntas, aunque intente saltarse la app.
+    // Solo un ADMIN puede crear/editar/borrar.
     match /bloques/{bloqueId} {
-      allow read:  if estaLogueado();
+      allow read:  if estaActivado() || esAdmin();
       allow write: if esAdmin();
     }
     match /temas/{temaId} {
-      allow read:  if estaLogueado();
+      allow read:  if estaActivado() || esAdmin();
       allow write: if esAdmin();
 
       match /preguntas/{preguntaId} {
-        allow read:  if estaLogueado();
+        allow read:  if estaActivado() || esAdmin();
         allow write: if esAdmin();
       }
     }
 
     // ── Fichas de alumnos ────────────────────────────────────────
     match /alumnos/{uid} {
-      // Lectura abierta a cualquier logueado: es NECESARIO para el ranking,
-      // que consulta la lista de alumnos ordenada por puntos.
-      allow read: if estaLogueado();
+      // Cada alumno SIEMPRE puede leer su propia ficha (para saber si está
+      // activado). El resto (ranking) solo lo ven alumnos activados o admins.
+      allow read: if request.auth != null && (request.auth.uid == uid || esAdmin() || estaActivado());
 
       // Cada alumno solo puede crear/editar SU PROPIA ficha. El admin, cualquiera.
       allow create, update: if estaLogueado() && (request.auth.uid == uid || esAdmin());
@@ -49,10 +56,10 @@ service cloud.firestore {
     }
 
     // ── Errores reportados por los alumnos ───────────────────────
-    // Cualquier alumno logueado puede ENVIAR un reporte.
+    // Solo un alumno ACTIVADO puede enviar un reporte.
     // Solo un ADMIN puede leerlos, marcarlos resueltos o borrarlos.
     match /reportes/{reporteId} {
-      allow create: if estaLogueado();
+      allow create: if estaActivado();
       allow read, update, delete: if esAdmin();
     }
   }
