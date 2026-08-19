@@ -13,7 +13,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, increment, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, increment, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBG9FlTRP-ZfzFVHBUDJZNf5XV9Cf80l_o",
@@ -173,8 +173,23 @@ async function registrarDispositivo(uid) {
   }
   return true;
 }
+// Vigila en tiempo real la ficha de ESTE dispositivo. Si un admin resetea los
+// dispositivos del alumno (borra el registro), aquí se detecta y se CIERRA la
+// sesión al instante -> así el reset no deja sesiones colándose.
+let _dispositivoUnsub = null;
+function vigilarDispositivo(uid) {
+  const deviceId = getDeviceId();
+  if (_dispositivoUnsub) { _dispositivoUnsub(); _dispositivoUnsub = null; }
+  _dispositivoUnsub = onSnapshot(doc(db,'alumnos',uid,'dispositivos',deviceId), (snap) => {
+    if (!snap.exists()) {
+      if (_dispositivoUnsub) { _dispositivoUnsub(); _dispositivoUnsub = null; }
+      alert('El profesor ha reiniciado tus dispositivos. Se cerrará la sesión; vuelve a iniciar sesión.');
+      signOut(auth);
+    }
+  }, () => {});
+}
 async function resetDispositivos(uid, nombre) {
-  if (!confirm(`¿Resetear dispositivos de ${nombre}? El alumno podrá registrar de nuevo hasta ${MAX_DISPOSITIVOS}.`)) return;
+  if (!confirm(`¿Resetear dispositivos de ${nombre}?\n\nSe CERRARÁ su sesión en todos los aparatos y podrá volver a registrar hasta ${MAX_DISPOSITIVOS}.`)) return;
   const snap = await getDocs(collection(db,'alumnos',uid,'dispositivos'));
   for (const d of snap.docs) await deleteDoc(d.ref);
   mostrarToast('📱 Dispositivos reseteados', nombre);
@@ -225,11 +240,13 @@ onAuthStateChanged(auth, async user => {
           showError('auth-error', `Limite de ${MAX_DISPOSITIVOS} dispositivos alcanzado. Contacta con la academia.`);
           return;
         }
+        vigilarDispositivo(user.uid);
       }
       showScreen('alumno');
       await cargarAlumno();
     }
   } else {
+    if (_dispositivoUnsub) { _dispositivoUnsub(); _dispositivoUnsub = null; }
     currentUser = null; isAdmin = false; modoVistaPrevia = false; alumnoData = null;
     testActivo = null; testFinalizado = false;
     pararTimer(); if (timerPregunta) { clearInterval(timerPregunta); timerPregunta = null; }
@@ -930,7 +947,7 @@ window.cargarAdminAlumnos = async () => {
         return `<div class="admin-tema-item"><div style="flex:1"><div style="font-weight:600">${a.nombre}</div>
           <div style="font-size:12px;color:#888">${a.email} · ${s.testsRealizados||0} tests · ${pct}% · 📱 ${devN}/${MAX_DISPOSITIVOS}</div></div>
           <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="btn-sm" style="background:rgba(212,80,10,0.15);color:#ff7d33" onclick="resetDispositivos('${a.id}','${a.nombre}')">📱 Reset</button>
+          <button class="btn-sm" style="background:rgba(212,80,10,0.15);color:#ff7d33" title="Borra los dispositivos registrados de este alumno y CIERRA su sesión en todos ellos. Úsalo si cambió de móvil o no puede entrar por el límite. Después podrá registrar hasta 2 dispositivos de nuevo. No afecta a sus tests ni a su progreso." onclick="resetDispositivos('${a.id}','${a.nombre}')">📱 Reset</button>
           <button class="btn-sm btn-danger" onclick="desactivarAlumno('${a.id}','${a.nombre}')">🚫 Desactivar</button></div></div>`;
       }).join('');
     }
