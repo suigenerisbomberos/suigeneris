@@ -635,13 +635,34 @@ window.iniciarTestFalladas = async () => {
 // Baraja el orden de las opciones A/B/C/D de cada pregunta (para que no se
 // memorice la posición). Conserva cuál es la correcta ajustando su índice.
 function _baraja(a){ const x=[...a]; for(let i=x.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[x[i],x[j]]=[x[j],x[i]];} return x; }
+// NO se barajan las preguntas cuyo significado depende de la posición o que
+// citan letras: "todas/ninguna de las anteriores", "las respuestas A y B", etc.
+function _preguntaSegura(base){
+  const txt = (base.opciones||[]).join(' \n ').toLowerCase();
+  if (/anterior|ningun|todas las|son correctas|correctas son/.test(txt)) return false;
+  if (/\b[a-d]\s*(?:y|,|o|\/|-)\s*[a-d]\b/.test(txt)) return false;                         // "a y b", "b, c"
+  if (/\b(la|las|opci[oó]n|opciones|respuesta|respuestas|letra)\s+[a-d]\b/.test(txt)) return false; // "la a", "opción b"
+  return true;
+}
+// Reescribe las letras "✗ X)" de la explicación según el nuevo orden barajado.
+function _remapExplic(explic, perm){
+  if (!explic) return explic;
+  const L=['A','B','C','D'];
+  return explic.replace(/✗\s*([A-D])\)/g, (m, letra) => {
+    const nuevo = perm.indexOf(L.indexOf(letra));
+    return nuevo >= 0 ? '✗ ' + L[nuevo] + ')' : m;
+  });
+}
 function aplicarPerm(base, perm){
   const opciones = perm.map(i=>base.opciones[i]);
   const correcta = perm.indexOf(base.correcta);
-  return { ...base, opciones, correcta, _perm:perm };
+  const explicacion = _remapExplic(base.explicacion, perm);
+  return { ...base, opciones, correcta, explicacion, _perm:perm };
 }
 function prepararPregunta(base){
-  return aplicarPerm(base, _baraja([...Array(base.opciones.length).keys()]));
+  const n = base.opciones.length;
+  const perm = _preguntaSegura(base) ? _baraja([...Array(n).keys()]) : [...Array(n).keys()];
+  return aplicarPerm(base, perm);
 }
 
 function iniciarTestComun() {
