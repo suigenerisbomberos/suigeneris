@@ -877,6 +877,7 @@ function renderPreguntasModal() {
 window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim(); const opciones=['preg-op0','preg-op1','preg-op2','preg-op3'].map(id=>$(id).value.trim()); const correcta=parseInt($('preg-correcta').value); const explicacion=$('preg-explicacion').value.trim(); if(!enunciado||opciones.some(o=>!o))return alert('Rellena enunciado y las 4 opciones'); if(isNaN(correcta))return alert('Selecciona la respuesta correcta'); const data={enunciado,opciones,correcta,explicacion,creadaEn:serverTimestamp()}; const editId=$('preg-edit-id').value; if(editId)await updateDoc(doc(db,'temas',temaEditar.id,'preguntas',editId),data); else await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),data); limpiarFormPregunta(); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
 window.editarPregunta=(id)=>{ const p=preguntas.find(pr=>pr.id===id); if(!p)return; $('preg-edit-id').value=p.id; $('preg-enunciado').value=p.enunciado; p.opciones.forEach((op,i)=>$(`preg-op${i}`).value=op); $('preg-correcta').value=p.correcta; $('preg-explicacion').value=p.explicacion||''; $('btn-guardar-preg').textContent='💾 Actualizar pregunta'; $('preg-enunciado').focus(); };
 window.eliminarPregunta=async(id)=>{ if(!confirm('¿Eliminar esta pregunta?'))return; await deleteDoc(doc(db,'temas',temaEditar.id,'preguntas',id)); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
+window.vaciarPreguntasTema=async()=>{ if(!temaEditar)return; const ps=preguntas.filter(p=>p.temaId===temaEditar.id); if(!ps.length)return alert('Este tema no tiene preguntas que borrar.'); if(!confirm(`⚠️ Vas a BORRAR las ${ps.length} preguntas de "${temaEditar.nombre}". El tema se mantiene (no se pierden sus estadísticas). Esta acción NO se puede deshacer. ¿Continuar?`))return; if(!confirm(`Confírmalo otra vez: se eliminarán ${ps.length} preguntas de forma permanente.`))return; const snap=await getDocs(collection(db,'temas',temaEditar.id,'preguntas')); let ok=0; for(const d of snap.docs){ try{ await deleteDoc(d.ref); ok++; }catch(e){} } await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); alert(`✔ ${ok} preguntas eliminadas. El tema "${temaEditar.nombre}" queda vacío y listo para importar el examen corregido.`); };
 function limpiarFormPregunta(){ $('preg-edit-id').value=''; $('preg-enunciado').value=''; ['preg-op0','preg-op1','preg-op2','preg-op3'].forEach(id=>$(id).value=''); $('preg-correcta').value=''; $('preg-explicacion').value=''; $('btn-guardar-preg').textContent='➕ Añadir pregunta'; }
 
 // ─── IMPORTADOR DE EXÁMENES (hoja de corrección de la skill) ───
@@ -1662,7 +1663,10 @@ body {
         <button class="btn-add" id="btn-guardar-preg" onclick="guardarPregunta()" style="width:100%">➕ Añadir pregunta</button>
       </div>
       <div>
-        <div style="font-weight:600;margin-bottom:8px;font-size:14px">Preguntas del tema</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px">
+          <div style="font-weight:600;font-size:14px">Preguntas del tema</div>
+          <button class="btn-sm btn-danger" onclick="vaciarPreguntasTema()">🧹 Vaciar preguntas</button>
+        </div>
         <div class="lista-preguntas" id="modal-lista-preguntas"></div>
       </div>
     </div>
