@@ -376,6 +376,7 @@ async function cargarAlumno() {
     try { await actualizarRacha(); } catch(e){}
     try { await comprobarLogros(); } catch(e){}
     try { const ns=await getDocs(collection(db,'alumnos',currentUser.uid,'notas')); ns.docs.forEach(d=>{ notasPorPregunta[d.id]=d.data().texto||''; }); } catch(e){}
+    try { const av=await getDocs(collection(db,'alumnos',currentUser.uid,'avisos')); window._avisos = av.docs.map(d=>({id:d.id,...d.data()})); } catch(e){ window._avisos=[]; }
     try { await cargarProgresoRemoto(); } catch(e){} // progreso de test desde otros dispositivos
   }
   renderInicio(); renderTemas(); renderProgreso();
@@ -432,7 +433,26 @@ function renderInicio() {
   $('stat-logros').textContent = (alumnoData?.logros?.length||0)+'/'+LOGROS.length;
   if (!modoVistaPrevia) cargarHistorial();
   else { $('historial-lista').innerHTML = '<p class="empty-msg">Modo vista previa — sin historial real</p>'; }
+  renderAvisos();
 }
+function _esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function renderAvisos() {
+  const cont = $('avisos-alumno'); if (!cont) return;
+  const avisos = window._avisos || [];
+  if (!avisos.length) { cont.innerHTML = ''; return; }
+  cont.innerHTML = avisos.map(a => `
+    <div style="margin-bottom:14px;background:linear-gradient(135deg,rgba(212,80,10,0.15),rgba(212,80,10,0.06));border:1px solid rgba(212,80,10,0.4);border-radius:14px;padding:14px 16px">
+      <div style="font-size:13px;font-weight:700;color:#ff8a4c;margin-bottom:4px">🔔 Respuesta del profesor a tu aviso</div>
+      ${a.enunciado?`<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Sobre: "${_esc(a.enunciado).slice(0,120)}"</div>`:''}
+      <div style="font-size:14px;color:#f1f5f9;margin-bottom:10px">${_esc(a.respuesta)||'(sin texto)'}</div>
+      <button class="btn-sm btn-primary" onclick="marcarAvisoLeido('${a.id}')">Entendido</button>
+    </div>`).join('');
+}
+window.marcarAvisoLeido = async (id) => {
+  window._avisos = (window._avisos||[]).filter(a => a.id !== id);
+  renderAvisos();
+  try { await deleteDoc(doc(db,'alumnos',currentUser.uid,'avisos',id)); } catch(e){}
+};
 
 async function cargarHistorial() {
   try {
@@ -859,7 +879,7 @@ window.eliminarTema=async(id)=>{ if(!confirm('¿Eliminar este tema y todas sus p
 
 let temaEditar=null;
 window.abrirGestorPreguntas=(id)=>{ temaEditar=temas.find(t=>t.id===id); if(!temaEditar)return; $('modal-tema-nombre').textContent=temaEditar.nombre; renderPreguntasModal(); limpiarFormPregunta(); resetImport(); $('modal-preguntas').style.display='flex'; };
-window.cerrarModal=()=>{ $('modal-preguntas').style.display='none'; temaEditar=null; };
+window.cerrarModal=()=>{ $('modal-preguntas').style.display='none'; temaEditar=null; _reporteEnEdicion=null; };
 window.cerrarModalSim=()=>{ $('modal-simulacro').style.display='none'; };
 
 function renderPreguntasModal() {
@@ -874,7 +894,7 @@ function renderPreguntasModal() {
     : '<p class="empty-msg">No hay preguntas en este tema</p>';
 }
 
-window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim(); const opciones=['preg-op0','preg-op1','preg-op2','preg-op3'].map(id=>$(id).value.trim()); const correcta=parseInt($('preg-correcta').value); const explicacion=$('preg-explicacion').value.trim(); if(!enunciado||opciones.some(o=>!o))return alert('Rellena enunciado y las 4 opciones'); if(isNaN(correcta))return alert('Selecciona la respuesta correcta'); const data={enunciado,opciones,correcta,explicacion,creadaEn:serverTimestamp()}; const editId=$('preg-edit-id').value; if(editId)await updateDoc(doc(db,'temas',temaEditar.id,'preguntas',editId),data); else await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),data); limpiarFormPregunta(); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
+window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim(); const opciones=['preg-op0','preg-op1','preg-op2','preg-op3'].map(id=>$(id).value.trim()); const correcta=parseInt($('preg-correcta').value); const explicacion=$('preg-explicacion').value.trim(); if(!enunciado||opciones.some(o=>!o))return alert('Rellena enunciado y las 4 opciones'); if(isNaN(correcta))return alert('Selecciona la respuesta correcta'); const data={enunciado,opciones,correcta,explicacion,creadaEn:serverTimestamp()}; const editId=$('preg-edit-id').value; if(editId)await updateDoc(doc(db,'temas',temaEditar.id,'preguntas',editId),data); else await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),data); limpiarFormPregunta(); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); if(_reporteEnEdicion){ const rid=_reporteEnEdicion; _reporteEnEdicion=null; if(confirm('✔ Pregunta guardada.\n\n¿Responder al alumno que la reportó y cerrar su aviso?')){ await responderReporte(rid); } } };
 window.editarPregunta=(id)=>{ const p=preguntas.find(pr=>pr.id===id); if(!p)return; $('preg-edit-id').value=p.id; $('preg-enunciado').value=p.enunciado; p.opciones.forEach((op,i)=>$(`preg-op${i}`).value=op); $('preg-correcta').value=p.correcta; $('preg-explicacion').value=p.explicacion||''; $('btn-guardar-preg').textContent='💾 Actualizar pregunta'; $('preg-enunciado').focus(); };
 window.eliminarPregunta=async(id)=>{ if(!confirm('¿Eliminar esta pregunta?'))return; await deleteDoc(doc(db,'temas',temaEditar.id,'preguntas',id)); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
 window.vaciarPreguntasTema=async()=>{ if(!temaEditar)return; const ps=preguntas.filter(p=>p.temaId===temaEditar.id); if(!ps.length)return alert('Este tema no tiene preguntas que borrar.'); if(!confirm(`⚠️ Vas a BORRAR las ${ps.length} preguntas de "${temaEditar.nombre}". El tema se mantiene (no se pierden sus estadísticas). Esta acción NO se puede deshacer. ¿Continuar?`))return; if(!confirm(`Confírmalo otra vez: se eliminarán ${ps.length} preguntas de forma permanente.`))return; const snap=await getDocs(collection(db,'temas',temaEditar.id,'preguntas')); let ok=0; for(const d of snap.docs){ try{ await deleteDoc(d.ref); ok++; }catch(e){} } await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); alert(`✔ ${ok} preguntas eliminadas. El tema "${temaEditar.nombre}" queda vacío y listo para importar el examen corregido.`); };
@@ -1030,14 +1050,49 @@ window.cargarReportes = async () => {
         <div style="font-size:12px;color:var(--text2)">Tema: ${r.temaNombre||'—'} · Correcta guardada: <span style="color:#4ade80">${r.respuestaCorrecta||'—'}</span></div>
         ${r.motivo?`<div style="font-size:13px;color:#ffb37a">💬 ${r.motivo}</div>`:''}
         <div style="font-size:11px;color:var(--text3)">Reportado por ${r.alumno||r.email||'alumno'}</div>
-        <button class="btn-sm" style="background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:#4ade80" onclick="resolverReporte('${d.id}')">✓ Marcar resuelto</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <button class="btn-sm btn-primary" onclick="editarDesdeReporte('${r.temaId}','${r.preguntaId}','${d.id}')">✏️ Editar pregunta</button>
+          <button class="btn-sm" style="background:rgba(212,80,10,0.15);border:1px solid rgba(212,80,10,0.4);color:#ff7d33" onclick="responderReporte('${d.id}')">💬 Responder al alumno</button>
+          <button class="btn-sm" style="background:rgba(255,255,255,0.06);color:var(--text2)" onclick="resolverReporte('${d.id}')">🗑 Descartar</button>
+        </div>
       </div>`;
     }).join('');
   } catch(e) { cont.innerHTML = '<p class="empty-msg">No se pudo cargar (¿faltan las reglas de Firebase para «reportes»?).</p>'; }
 };
 window.resolverReporte = async (id) => {
-  if(!confirm('¿Marcar este aviso como resuelto? (se eliminará de la lista)')) return;
+  if(!confirm('¿Descartar este aviso sin responder al alumno? (se elimina de la lista)')) return;
   try { await deleteDoc(doc(db,'reportes',id)); cargarReportes(); } catch(e){ alert('No se pudo eliminar.'); }
+};
+// Abre el editor con la pregunta reportada ya cargada (sin ir a buscarla).
+let _reporteEnEdicion = null;
+window.editarDesdeReporte = (temaId, preguntaId, reporteId) => {
+  const tema = temas.find(t=>t.id===temaId);
+  if (!tema) return alert('El tema de esta pregunta ya no existe.');
+  const p = preguntas.find(pr=>pr.id===preguntaId && pr.temaId===temaId);
+  if (!p) return alert('Esa pregunta ya no existe (¿se borró?). Puedes responder al alumno o descartar el aviso.');
+  _reporteEnEdicion = reporteId;
+  temaEditar = tema;
+  $('modal-tema-nombre').textContent = tema.nombre;
+  renderPreguntasModal(); resetImport();
+  $('modal-preguntas').style.display='flex';
+  editarPregunta(preguntaId);
+};
+// Escribe una respuesta que el alumno verá en su cuenta, y cierra el reporte.
+window.responderReporte = async (reporteId) => {
+  let rep;
+  try { const s = await getDoc(doc(db,'reportes',reporteId)); if(!s.exists()) { cargarReportes(); return alert('El reporte ya no existe.'); } rep = s.data(); }
+  catch(e){ return alert('No se pudo leer el reporte.'); }
+  const respuesta = prompt('Escribe la respuesta para el alumno (la verá en su cuenta):', 'Gracias por avisar. La pregunta ya está corregida.');
+  if (respuesta === null) return;
+  try {
+    if (rep.uid) await setDoc(doc(db,'alumnos',rep.uid,'avisos',reporteId), {
+      enunciado: rep.enunciado||'', temaNombre: rep.temaNombre||'',
+      respuesta: (respuesta||'').trim(), profesor: currentUser.email||'', fecha: serverTimestamp()
+    });
+    await deleteDoc(doc(db,'reportes',reporteId));
+    mostrarToast('✅ Respondido', 'El alumno verá tu respuesta en su cuenta.');
+    cargarReportes();
+  } catch(e){ alert('No se pudo enviar la respuesta.'); }
 };
 window.analizarFalladas = async () => {
   const cont = $('admin-falladas-global'); if(!cont) return;
@@ -1464,6 +1519,7 @@ body {
         <div class="stat-card"><div class="stat-num" id="stat-puntos">0</div><div class="stat-label">Puntos</div></div>
         <div class="stat-card"><div class="stat-num" id="stat-logros">0/0</div><div class="stat-label">Logros</div></div>
       </div>
+      <div id="avisos-alumno"></div>
       <button onclick="showAlumnoTab('temas')" style="width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:16px;padding:20px;color:#fff;font-size:17px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 10px 30px rgba(212,80,10,0.35)">▶ Empezar test</button>
       <div class="card"><div class="card-title">📋 Últimos resultados</div><div id="historial-lista"></div></div>
     </div>
