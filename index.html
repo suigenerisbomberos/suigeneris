@@ -154,6 +154,8 @@ window.reanudarTest = (id) => {
     indice: Math.min(g.indice||0, ps.length-1), guardarProgreso: true };
   respuestasTest = g.respuestas || {};
   preguntasMarcadas = new Set(g.marcadas || []);
+  // Rescatar a la lista de "Revisar" las marcadas de un test que estaba a medias
+  ps.forEach(p => { if (preguntasMarcadas.has(p.id) && !marcadasGuardadas.has(p.id)) guardarMarcada(p.id, p.temaId); });
   modoExamenGlobal = !!g.modoExamen; testFinalizado = false; testInicio = Date.now();
   const btn = document.getElementById('btn-modo-examen');
   if (btn) { btn.textContent = modoExamenGlobal ? '📖 Modo estudio' : '📝 Modo examen'; btn.classList.toggle('active-examen', modoExamenGlobal); }
