@@ -38,6 +38,7 @@ let isAdmin = false;
 let modoVistaPrevia = false;
 let bloques = [], temas = [], preguntas = [], alumnoData = null;
 let testActivo = null, respuestasTest = {}, preguntasMarcadas = new Set();
+let marcadasGuardadas = new Set(); // preguntas marcadas 🚩 para revisar (persistente por alumno)
 let testFinalizado = false, testInicio = null, testTimer = null, testTiempoLimite = null;
 let modoExamenGlobal = false;
 let tiempoPregunta = 0, timerPregunta = null;
@@ -377,6 +378,7 @@ async function cargarAlumno() {
     try { await comprobarLogros(); } catch(e){}
     try { const ns=await getDocs(collection(db,'alumnos',currentUser.uid,'notas')); ns.docs.forEach(d=>{ notasPorPregunta[d.id]=d.data().texto||''; }); } catch(e){}
     try { const av=await getDocs(collection(db,'alumnos',currentUser.uid,'avisos')); window._avisos = av.docs.map(d=>({id:d.id,...d.data()})); } catch(e){ window._avisos=[]; }
+    try { const mc=await getDocs(collection(db,'alumnos',currentUser.uid,'marcadas')); marcadasGuardadas=new Set(mc.docs.map(d=>d.id)); } catch(e){ marcadasGuardadas=new Set(); }
     try { await cargarProgresoRemoto(); } catch(e){} // progreso de test desde otros dispositivos
   }
   renderInicio(); renderTemas(); renderProgreso();
@@ -652,6 +654,39 @@ window.iniciarTestFalladas = async () => {
   } catch(e) { alert('Error al cargar falladas'); }
 };
 
+// ── PREGUNTAS A REVISAR (marcadas con 🚩, por alumno y por tema) ──
+window.iniciarTestMarcadas = () => {
+  if (modoVistaPrevia) return alert('En modo vista previa no hay marcadas reales');
+  const ps = [...marcadasGuardadas].map(id=>preguntas.find(p=>p.id===id)).filter(Boolean);
+  if (!ps.length) return alert('No tienes preguntas marcadas para revisar.');
+  const shuffled = [...ps].sort(()=>Math.random()-.5);
+  testActivo = { tipo:'marcadas', temaId:'marcadas', temaNombre:'Preguntas a revisar', preguntas:shuffled, indice:0 };
+  iniciarTestComun();
+};
+window.quitarMarcadaRevisar = (pid) => { quitarMarcada(pid); preguntasMarcadas.delete(pid); renderRevisar(); };
+function _revisarItem(p, num){
+  const ops = p.opciones.map((o,i)=>`<div style="font-size:13px;color:${i===p.correcta?'#4ade80':'var(--text2)'};padding:3px 0">${'ABCD'[i]}) ${_esc(o)}${i===p.correcta?' ✔':''}</div>`).join('');
+  return `<details style="border-top:1px solid var(--border);padding:10px 2px">
+    <summary style="cursor:pointer;font-weight:600;font-size:14px">🚩 ${_esc(p.enunciado)}</summary>
+    <div style="margin-top:8px">${ops}${p.explicacion?`<div class="test-explicacion" style="display:block;margin-top:8px">💡 ${p.explicacion}</div>`:''}
+      <button class="btn-sm" style="margin-top:10px;background:rgba(255,255,255,0.06);color:var(--text2)" onclick="quitarMarcadaRevisar('${p.id}')">Quitar de la lista 🚩</button>
+    </div>
+  </details>`;
+}
+function renderRevisar(){
+  const cont = $('revisar-lista'), btn = $('revisar-test-btn'); if(!cont) return;
+  const ps = [...marcadasGuardadas].map(id=>preguntas.find(p=>p.id===id)).filter(Boolean);
+  if(!ps.length){ cont.innerHTML='<p class="empty-msg">Aún no has marcado ninguna pregunta.<br>Durante un test, pulsa <strong>🚩 Marcar</strong> y aparecerá aquí para repasarla.</p>'; if(btn) btn.style.display='none'; return; }
+  if(btn) btn.style.display='flex';
+  const porTema = {};
+  ps.forEach(p=>{ const t=temas.find(x=>x.id===p.temaId); const nombre=t?t.nombre:'Otros'; (porTema[nombre]=porTema[nombre]||[]).push(p); });
+  cont.innerHTML = Object.keys(porTema).sort().map(nombre=>`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">📚 ${_esc(nombre)} <span style="color:var(--text2);font-weight:400;font-size:13px">· ${porTema[nombre].length}</span></div>
+      ${porTema[nombre].map(p=>_revisarItem(p)).join('')}
+    </div>`).join('');
+}
+
 // Baraja el orden de las opciones A/B/C/D de cada pregunta (para que no se
 // memorice la posición). Conserva cuál es la correcta ajustando su índice.
 function _baraja(a){ const x=[...a]; for(let i=x.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[x[i],x[j]]=[x[j],x[i]];} return x; }
@@ -758,7 +793,9 @@ window.irPregunta=(i)=>{
     guardarTestEnCurso();
   }
 };
-window.toggleMarcar=()=>{const p=testActivo.preguntas[testActivo.indice];if(preguntasMarcadas.has(p.id))preguntasMarcadas.delete(p.id);else preguntasMarcadas.add(p.id);renderTest();guardarTestEnCurso();};
+function guardarMarcada(pid, temaId){ marcadasGuardadas.add(pid); if(!modoVistaPrevia && currentUser) setDoc(doc(db,'alumnos',currentUser.uid,'marcadas',pid),{temaId:temaId||'',fecha:serverTimestamp()}).catch(()=>{}); }
+function quitarMarcada(pid){ marcadasGuardadas.delete(pid); if(!modoVistaPrevia && currentUser) deleteDoc(doc(db,'alumnos',currentUser.uid,'marcadas',pid)).catch(()=>{}); }
+window.toggleMarcar=()=>{const p=testActivo.preguntas[testActivo.indice];if(preguntasMarcadas.has(p.id)){preguntasMarcadas.delete(p.id);quitarMarcada(p.id);}else{preguntasMarcadas.add(p.id);guardarMarcada(p.id,p.temaId);}renderTest();guardarTestEnCurso();};
 
 window.finalizarTest = async () => {
   if (!testActivo||testFinalizado) return;
@@ -829,6 +866,7 @@ window.showAlumnoTab=(tab)=>{
   document.querySelector(`.alumno-tab[data-tab="${tab}"]`)?.classList.add('active');
   if(tab==='inicio') renderInicio();
   if(tab==='temas') renderTemas();
+  if(tab==='revisar') renderRevisar();
   if(tab==='progreso') renderProgreso();
   if(tab==='ranking') cargarRanking();
   if(tab==='test') renderTest();
@@ -1506,6 +1544,7 @@ body {
   <div class="tabs-bar">
     <button class="tab-btn alumno-tab-btn active" data-tab="inicio" onclick="showAlumnoTab('inicio')"><span class="ico">🏠</span><span>Inicio</span></button>
     <button class="tab-btn alumno-tab-btn" data-tab="temas" onclick="showAlumnoTab('temas')"><span class="ico">🎯</span><span>Tests</span></button>
+    <button class="tab-btn alumno-tab-btn" data-tab="revisar" onclick="showAlumnoTab('revisar')"><span class="ico">🚩</span><span>Revisar</span></button>
     <button class="tab-btn alumno-tab-btn" data-tab="progreso" onclick="showAlumnoTab('progreso')"><span class="ico">📊</span><span>Progreso</span></button>
     <button class="tab-btn alumno-tab-btn" data-tab="ranking" onclick="showAlumnoTab('ranking')"><span class="ico">🏆</span><span>Ranking</span></button>
   </div>
@@ -1572,6 +1611,12 @@ body {
           <div class="test-mapa" id="test-mapa"></div>
         </div>
       </div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="revisar">
+      <h2 style="font-size:20px;font-weight:700;margin-bottom:6px">🚩 Preguntas a revisar</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Las preguntas que marcas con 🚩 durante los tests se guardan aquí, ordenadas por tema. Despliega cada una para ver la respuesta correcta y la explicación.</p>
+      <button id="revisar-test-btn" onclick="iniciarTestMarcadas()" style="display:none;width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:14px;padding:16px;color:#fff;font-size:15px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;align-items:center;justify-content:center;gap:8px">▶ Hacer un test con estas preguntas</button>
+      <div id="revisar-lista"></div>
     </div>
     <div class="tab-panel alumno-tab" data-tab="progreso">
       <h2 style="font-size:20px;font-weight:700;margin-bottom:18px">Mi progreso</h2>
