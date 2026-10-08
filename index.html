@@ -621,9 +621,11 @@ window.confirmarTestMixto = () => {
   if (!temaIds.length) return alert('Selecciona al menos un tema');
   const ps = preguntas.filter(p=>temaIds.includes(p.temaId));
   if (!ps.length) return alert('Los temas seleccionados no tienen preguntas');
-  const shuffled = [...ps].sort(()=>Math.random()-.5);
+  let shuffled = [...ps].sort(()=>Math.random()-.5);
+  const numSel = parseInt($('mixto-num').value);
+  if (!isNaN(numSel) && numSel>0) shuffled = shuffled.slice(0, Math.min(numSel, shuffled.length));
   const nombresCortos = temaIds.length === temas.length ? 'Todos los temas' : `${temaIds.length} temas seleccionados`;
-  testActivo = { tipo:'mixto', temaId:'mixto', temaNombre:`Test mixto — ${nombresCortos}`, preguntas:shuffled, indice:0 };
+  testActivo = { tipo:'mixto', temaId:'mixto', temaNombre:`Test mixto — ${nombresCortos} (${shuffled.length} preg.)`, preguntas:shuffled, indice:0 };
   $('modal-selector-temas').style.display='none';
   iniciarTestComun();
 };
@@ -634,10 +636,10 @@ window.iniciarSimulacro = () => {
 };
 
 window.confirmarSimulacro = () => {
-  const num=parseInt($('sim-numpreguntas').value), min=parseInt($('sim-minutos').value);
+  const num=parseInt($('sim-numpreguntas').value), min=parseInt($('sim-minutos').value), penal=parseInt($('sim-penal').value)||0;
   if (!num||!min) return;
   const shuffled = [...preguntas].sort(()=>Math.random()-.5).slice(0,Math.min(num,preguntas.length));
-  testActivo = { tipo:'simulacro', temaId:'simulacro', temaNombre:`Simulacro (${shuffled.length} preguntas, ${min} min)`, preguntas:shuffled, indice:0, modoExamen:true };
+  testActivo = { tipo:'simulacro', temaId:'simulacro', temaNombre:`Simulacro (${shuffled.length} preguntas, ${min} min)`, preguntas:shuffled, indice:0, modoExamen:true, penalizacion:penal };
   testTiempoLimite = min*60;
   $('modal-simulacro').style.display='none';
   iniciarTestComun();
@@ -758,6 +760,7 @@ function renderTest() {
   const {preguntas:ps,indice,modoExamen}=testActivo, p=ps[indice], total=ps.length;
   $('test-titulo').textContent=testActivo.temaNombre;
   $('test-prog-bar').style.width=`${((indice+1)/total)*100}%`;
+  $('test-contador').textContent=`Pregunta ${indice+1} de ${total}`;
   $('test-pregunta').textContent=p.enunciado;
   const respondida=respuestasTest[p.id]!==undefined, verRes=testFinalizado||(respondida&&!modoExamenGlobal);
   $('test-opciones').innerHTML=p.opciones.map((op,i)=>{
@@ -806,13 +809,21 @@ window.finalizarTest = async () => {
   pararTimer(); if(timerPregunta){clearInterval(timerPregunta);timerPregunta=null;} testFinalizado=true;
   const ps=testActivo.preguntas, aciertos=ps.filter(p=>respuestasTest[p.id]===p.correcta).length;
   const total=ps.length, pct=Math.round((aciertos/total)*100);
-  const puntos=aciertos*10+(testActivo.tipo==='simulacro'?50:0);
   const tipo=testActivo.tipo, temaId=testActivo.temaId, temaNombre=testActivo.temaNombre, segundos=Math.round((Date.now()-testInicio)/1000);
+  const fallos=ps.filter(p=>respuestasTest[p.id]!==undefined&&respuestasTest[p.id]!==p.correcta).length;
+  const penal=testActivo.penalizacion||0;                       // 0,2,3,4 (solo simulacros)
+  const netas=penal>0 ? Math.max(0, aciertos-(fallos/penal)) : aciertos;
+  const nota10=total>0 ? Math.max(0, Math.min(10, (netas/total)*10)) : 0;
+  // Puntos del ranking: el simulacro con penalización resta por fallos
+  const puntos = tipo==='simulacro' ? Math.max(0, Math.round(netas))*10 + 50 : aciertos*10;
   // 1) Mostrar el resultado YA (no depende de internet, así nunca se congela)
   $('resultado-titulo').textContent=pct>=70?'¡Buen trabajo! 🔥':pct>=50?'Puedes mejorar 💪':'A seguir practicando 📚';
   $('resultado-pct').textContent=pct+'%';
   $('resultado-pct').style.color=pct>=70?'#4ade80':pct>=50?'#ff7d33':'#f87171';
-  $('resultado-detalle').innerHTML=`<strong>${aciertos}</strong> correctas de <strong>${total}</strong><br>+${puntos} puntos`;
+  $('resultado-detalle').innerHTML=`<strong>${aciertos}</strong> correctas · <strong>${fallos}</strong> fallos (de ${total})`+
+    `<br><span style="display:inline-block;margin-top:6px;font-size:20px;font-weight:800;color:#ff7d33">📝 Nota: ${nota10.toFixed(2)} / 10</span>`+
+    (penal>0?`<br><span style="font-size:12px;color:var(--text2)">Penalización: 1 cada ${penal} fallos</span>`:'')+
+    `<br><span style="font-size:13px;color:var(--text2)">+${puntos} puntos</span>`;
   $('pantalla-resultado').style.display='flex';
   renderTest();
   // 2) Guardar en SEGUNDO PLANO, en paralelo y con manejo de errores
@@ -821,7 +832,7 @@ window.finalizarTest = async () => {
     const updates={'estadisticas.testsRealizados':increment(1),'estadisticas.totalPreguntas':increment(total),'estadisticas.totalAciertos':increment(aciertos),'estadisticas.puntos':increment(puntos)};
     if(tipo==='simulacro') updates.simulacrosRealizados=increment(1);
     const escrituras=[
-      addDoc(collection(db,'alumnos',currentUser.uid,'historial'),{ temaId,temaNombre,tipo,aciertos,total,porcentaje:pct,tiempoSegundos:segundos,fecha:serverTimestamp() }),
+      addDoc(collection(db,'alumnos',currentUser.uid,'historial'),{ temaId,temaNombre,tipo,aciertos,fallos,total,porcentaje:pct,nota:Math.round(nota10*100)/100,penalizacion:penal,tiempoSegundos:segundos,fecha:serverTimestamp() }),
       updateDoc(doc(db,'alumnos',currentUser.uid),updates)
     ];
     for(const p of ps){
@@ -1590,6 +1601,7 @@ body {
             <div class="test-timer" id="test-timer"></div>
           </div>
           <div class="prog-bar"><div class="prog-fill" id="test-prog-bar" style="width:0%"></div></div>
+          <div id="test-contador" style="text-align:right;font-size:12px;font-weight:700;color:var(--text2);margin:5px 2px 0"></div>
           <div class="pregunta-box">
             <div class="pregunta-text" id="test-pregunta"></div>
             <div class="opciones" id="test-opciones"></div>
@@ -1788,7 +1800,10 @@ body {
       <button class="btn-sel" onclick="document.querySelectorAll('.selector-check').forEach(c=>c.checked=true)">✅ Todos</button>
       <button class="btn-sel" onclick="document.querySelectorAll('.selector-check').forEach(c=>c.checked=false)">☐ Ninguno</button>
     </div>
-    <div id="selector-temas-lista" style="max-height:400px;overflow-y:auto"></div>
+    <div id="selector-temas-lista" style="max-height:340px;overflow-y:auto"></div>
+    <div class="form-preg" style="margin-top:14px"><label>¿Cuántas preguntas? (déjalo vacío = todas)</label>
+      <input id="mixto-num" type="number" min="1" placeholder="Ej: 20" inputmode="numeric">
+    </div>
     <button class="btn-add" onclick="confirmarTestMixto()" style="width:100%;margin-top:16px">▶️ Empezar test mixto</button>
   </div>
 </div>
@@ -1807,7 +1822,15 @@ body {
       <div class="form-preg"><label>Tiempo (minutos)</label>
         <select id="sim-minutos"><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90" selected>90 minutos</option><option value="120">120 minutos</option></select>
       </div>
-      <p style="color:var(--text2);font-size:13px;line-height:1.5">⚠️ Modo examen: no verás las respuestas hasta el final.</p>
+      <div class="form-preg"><label>Penalización por fallo</label>
+        <select id="sim-penal">
+          <option value="0">Sin penalización</option>
+          <option value="2">1 cada 2 fallos (fuerte)</option>
+          <option value="3" selected>1 cada 3 fallos</option>
+          <option value="4">1 cada 4 fallos (suave)</option>
+        </select>
+      </div>
+      <p style="color:var(--text2);font-size:13px;line-height:1.5">⚠️ Modo examen: no verás las respuestas hasta el final. Al acabar verás tu <strong>nota del 1 al 10</strong>.</p>
       <button class="btn-add" onclick="confirmarSimulacro()" style="width:100%">▶️ Empezar simulacro</button>
     </div>
   </div>
