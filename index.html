@@ -1125,6 +1125,19 @@ window.resolverReporte = async (id) => {
   try { await deleteDoc(doc(db,'reportes',id)); cargarReportes(); } catch(e){ alert('No se pudo eliminar.'); }
 };
 let _reporteEnEdicion = null;
+// Abre el editor con una pregunta cargada (desde el análisis de falladas, sin reporte).
+window.editarPreguntaDirecto = (temaId, preguntaId) => {
+  const tema = temas.find(t=>t.id===temaId);
+  if (!tema) return alert('El tema de esta pregunta ya no existe.');
+  const p = preguntas.find(pr=>pr.id===preguntaId && pr.temaId===temaId);
+  if (!p) return alert('Esa pregunta ya no existe.');
+  _reporteEnEdicion = null;
+  temaEditar = tema;
+  $('modal-tema-nombre').textContent = tema.nombre;
+  renderPreguntasModal(); resetImport();
+  $('modal-preguntas').style.display='flex';
+  editarPregunta(preguntaId);
+};
 window.editarDesdeReporte = (temaId, preguntaId, reporteId) => {
   const tema = temas.find(t=>t.id===temaId);
   if (!tema) return alert('El tema de esta pregunta ya no existe.');
@@ -1199,7 +1212,11 @@ window.analizarFalladas = async () => {
     cont.innerHTML = arr.map(x => {
       const p = preguntas.find(q => q.id === x.pid);
       const txt = p ? p.enunciado : '(pregunta eliminada)';
-      return `<div class="admin-tema-item"><div style="flex:1">${(txt||'').slice(0,140)}</div><div style="color:#f87171;font-weight:700;white-space:nowrap;margin-left:10px">${x.n} alumno(s)</div></div>`;
+      return `<div class="admin-tema-item" style="align-items:center;gap:10px">
+        <div style="flex:1">${_esc((txt||'').slice(0,140))}</div>
+        <div style="color:#f87171;font-weight:700;white-space:nowrap">${x.n} alumno(s)</div>
+        ${p?`<button class="btn-sm btn-primary" onclick="editarPreguntaDirecto('${p.temaId}','${p.id}')">✏️ Editar</button>`:''}
+      </div>`;
     }).join('');
   } catch(e) { cont.innerHTML = '<p class="empty-msg">Error al analizar.</p>'; }
 };
