@@ -121,7 +121,7 @@ window.salirDelTest = () => {
 };
 function guardarTestEnCurso() {
   if (!testActivo || testFinalizado || modoVistaPrevia) return;
-  if (testActivo.tipo !== 'tema') return; // solo los tests por tema se guardan
+  if (testActivo.tipo === 'simulacro') return; // todos guardan progreso menos el simulacro (es examen real)
   try {
     localStorage.setItem(_testKeyFor(testActivo.temaId), JSON.stringify({
       tipo: testActivo.tipo, temaId: testActivo.temaId, temaNombre: testActivo.temaNombre,
@@ -474,6 +474,16 @@ async function renderTemas() {
   });
   if (sinBloque.length) html += `<div class="bloque-section"><h3 class="bloque-titulo">Otros temas</h3><div class="temas-grid">${renderTemasCards(sinBloque)}</div></div>`;
   cont.innerHTML = html;
+  renderContinuarTests();
+}
+// Tests a medias que NO son por tema (mixto, falladas, marcadas): sitio para continuarlos.
+function renderContinuarTests(){
+  const cont = $('continuar-tests'); if(!cont) return;
+  const otros = Object.values(temasEnCurso()).filter(g=>g.tipo && g.tipo!=='tema' && g.ordenIds && g.ordenIds.length);
+  if(!otros.length){ cont.innerHTML=''; return; }
+  cont.innerHTML = `<div class="card" style="margin-bottom:22px;border-color:rgba(212,80,10,0.5)"><div class="card-title">▶ Continuar test a medias</div>`+
+    otros.map(g=>`<button class="btn-nav" style="width:100%;text-align:left;margin-top:8px" onclick="reanudarTest('${g.temaId}')">▶ ${_esc(g.temaNombre||g.tipo)} · pregunta ${(g.indice||0)+1}/${g.ordenIds.length}</button>`).join('')+
+    `</div>`;
 }
 
 function renderTemasCards(ts) {
@@ -602,6 +612,8 @@ window.confirmarTestMixto = () => {
   if (!temaIds.length) return alert('Selecciona al menos un tema');
   const ps = preguntas.filter(p=>temaIds.includes(p.temaId));
   if (!ps.length) return alert('Los temas seleccionados no tienen preguntas');
+  if (leerTest('mixto') && !confirm('Tienes un test mixto a medias (puedes continuarlo desde "Tests"). ¿Empezar uno nuevo y descartar el anterior?')) return;
+  borrarTest('mixto');
   let shuffled = [...ps].sort(()=>Math.random()-.5);
   const numSel = parseInt($('mixto-num').value);
   if (!isNaN(numSel) && numSel>0) shuffled = shuffled.slice(0, Math.min(numSel, shuffled.length));
@@ -633,6 +645,8 @@ window.iniciarTestFalladas = async () => {
     const ids = s.docs.map(d=>d.id);
     const ps = preguntas.filter(p=>ids.includes(p.id));
     if (!ps.length) return alert('No tienes preguntas falladas para repasar 👏');
+    if (leerTest('falladas') && !confirm('Tienes un repaso de falladas a medias (puedes continuarlo desde "Tests"). ¿Empezar uno nuevo y descartar el anterior?')) return;
+    borrarTest('falladas');
     const shuffled = [...ps].sort(()=>Math.random()-.5).slice(0,Math.min(ps.length,20));
     testActivo = { tipo:'falladas', temaId:'falladas', temaNombre:'Repaso de falladas', preguntas:shuffled, indice:0 };
     iniciarTestComun();
@@ -644,6 +658,8 @@ window.iniciarTestMarcadas = () => {
   if (modoVistaPrevia) return alert('En modo vista previa no hay marcadas reales');
   const ps = [...marcadasGuardadas].map(id=>preguntas.find(p=>p.id===id)).filter(Boolean);
   if (!ps.length) return alert('No tienes preguntas marcadas para revisar.');
+  if (leerTest('marcadas') && !confirm('Tienes un test de marcadas a medias (puedes continuarlo desde "Tests"). ¿Empezar uno nuevo y descartar el anterior?')) return;
+  borrarTest('marcadas');
   const shuffled = [...ps].sort(()=>Math.random()-.5);
   testActivo = { tipo:'marcadas', temaId:'marcadas', temaNombre:'Preguntas a revisar', preguntas:shuffled, indice:0 };
   iniciarTestComun();
@@ -1598,6 +1614,7 @@ body {
       <div class="card"><div class="card-title">📋 Últimos resultados</div><div id="historial-lista"></div></div>
     </div>
     <div class="tab-panel alumno-tab" data-tab="temas">
+      <div id="continuar-tests"></div>
       <div class="card" style="margin-bottom:22px">
         <div class="card-title">⚡ Modos de test</div>
         <div class="modos-grid">
