@@ -13,7 +13,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, increment, limit, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, query, orderBy, where, serverTimestamp, increment, limit, onSnapshot, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBG9FlTRP-ZfzFVHBUDJZNf5XV9Cf80l_o",
@@ -379,7 +379,6 @@ async function cargarAlumno() {
     try { await actualizarRacha(); } catch(e){}
     try { await comprobarLogros(); } catch(e){}
     try { const ns=await getDocs(collection(db,'alumnos',currentUser.uid,'notas')); ns.docs.forEach(d=>{ notasPorPregunta[d.id]=d.data().texto||''; }); } catch(e){}
-    try { const av=await getDocs(collection(db,'alumnos',currentUser.uid,'avisos')); window._avisos = av.docs.map(d=>({id:d.id,...d.data()})); } catch(e){ window._avisos=[]; }
     try { const mc=await getDocs(collection(db,'alumnos',currentUser.uid,'marcadas')); marcadasGuardadas=new Set(mc.docs.map(d=>d.id)); } catch(e){ marcadasGuardadas=new Set(); }
     try { await cargarProgresoRemoto(); } catch(e){} // progreso de test desde otros dispositivos
   }
@@ -437,26 +436,8 @@ function renderInicio() {
   $('stat-logros').textContent = (alumnoData?.logros?.length||0)+'/'+LOGROS.length;
   if (!modoVistaPrevia) cargarHistorial();
   else { $('historial-lista').innerHTML = '<p class="empty-msg">Modo vista previa — sin historial real</p>'; }
-  renderAvisos();
 }
 function _esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function renderAvisos() {
-  const cont = $('avisos-alumno'); if (!cont) return;
-  const avisos = window._avisos || [];
-  if (!avisos.length) { cont.innerHTML = ''; return; }
-  cont.innerHTML = avisos.map(a => `
-    <div style="margin-bottom:14px;background:linear-gradient(135deg,rgba(212,80,10,0.15),rgba(212,80,10,0.06));border:1px solid rgba(212,80,10,0.4);border-radius:14px;padding:14px 16px">
-      <div style="font-size:13px;font-weight:700;color:#ff8a4c;margin-bottom:4px">🔔 Respuesta del profesor a tu aviso</div>
-      ${a.enunciado?`<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Sobre: "${_esc(a.enunciado).slice(0,120)}"</div>`:''}
-      <div style="font-size:14px;color:#f1f5f9;margin-bottom:10px">${_esc(a.respuesta)||'(sin texto)'}</div>
-      <button class="btn-sm btn-primary" onclick="marcarAvisoLeido('${a.id}')">Entendido</button>
-    </div>`).join('');
-}
-window.marcarAvisoLeido = async (id) => {
-  window._avisos = (window._avisos||[]).filter(a => a.id !== id);
-  renderAvisos();
-  try { await deleteDoc(doc(db,'alumnos',currentUser.uid,'avisos',id)); } catch(e){}
-};
 
 async function cargarHistorial() {
   try {
@@ -856,18 +837,20 @@ window.guardarNota=async(el)=>{
 window.reportarPregunta = async () => {
   if (!testActivo || modoVistaPrevia) return;
   const p = testActivo.preguntas[testActivo.indice];
-  const motivo = prompt('¿Qué falla ves en esta pregunta? (respuesta mal marcada, errata, opción repetida…)\n\nPuedes dejarlo vacío y enviar igualmente:');
+  const orig = preguntas.find(q=>q.id===p.id) || p; // versión canónica (sin barajar)
+  const motivo = prompt('¿Qué falla ves en esta pregunta o qué duda tienes? (puedes dejarlo vacío):');
   if (motivo === null) return;
   try {
     await addDoc(collection(db,'reportes'), {
-      preguntaId: p.id, temaId: p.temaId, temaNombre: testActivo.temaNombre,
-      enunciado: p.enunciado, respuestaCorrecta: p.opciones[p.correcta],
-      motivo: (motivo||'').trim(),
+      preguntaId: p.id, temaId: orig.temaId, temaNombre: testActivo.temaNombre,
+      enunciado: orig.enunciado, opciones: orig.opciones||[], correcta: typeof orig.correcta==='number'?orig.correcta:0, explicacion: orig.explicacion||'',
       alumno: currentUser.displayName||'', email: currentUser.email||'', uid: currentUser.uid,
-      resuelto: false, fecha: serverTimestamp()
+      estado: 'abierta', leidoAdmin: false, leidoAlumno: true,
+      mensajes: [{ de:'alumno', texto:(motivo||'').trim()||'(sin texto)', fecha:new Date().toISOString() }],
+      fecha: serverTimestamp(), ultima: serverTimestamp()
     });
-    mostrarToast('¡Gracias! 🙏', 'Tu aviso ha llegado al profesor. Lo revisará pronto.');
-  } catch(e) { alert('No se pudo enviar el aviso. Inténtalo más tarde.'); }
+    mostrarToast('¡Gracias! 🙏', 'Tu consulta ha llegado al profesor. La verás en Revisar › Mis consultas.');
+  } catch(e) { alert('No se pudo enviar. Inténtalo más tarde.'); }
 };
 window.verRespuestas=()=>{$('pantalla-resultado').style.display='none';testActivo.indice=0;renderTest();};
 window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;testFinalizado=false;pararTimer();salirModoTest();showAlumnoTab('inicio');renderInicio();};
@@ -879,7 +862,7 @@ window.showAlumnoTab=(tab)=>{
   document.querySelector(`.alumno-tab[data-tab="${tab}"]`)?.classList.add('active');
   if(tab==='inicio') renderInicio();
   if(tab==='temas') renderTemas();
-  if(tab==='revisar') renderRevisar();
+  if(tab==='revisar'){ renderRevisar(); cargarMisConsultas(); }
   if(tab==='progreso') renderProgreso();
   if(tab==='ranking') cargarRanking();
   if(tab==='test') renderTest();
@@ -945,7 +928,7 @@ function renderPreguntasModal() {
     : '<p class="empty-msg">No hay preguntas en este tema</p>';
 }
 
-window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim(); const opciones=['preg-op0','preg-op1','preg-op2','preg-op3'].map(id=>$(id).value.trim()); const correcta=parseInt($('preg-correcta').value); const explicacion=$('preg-explicacion').value.trim(); if(!enunciado||opciones.some(o=>!o))return alert('Rellena enunciado y las 4 opciones'); if(isNaN(correcta))return alert('Selecciona la respuesta correcta'); const data={enunciado,opciones,correcta,explicacion,creadaEn:serverTimestamp()}; const editId=$('preg-edit-id').value; if(editId)await updateDoc(doc(db,'temas',temaEditar.id,'preguntas',editId),data); else await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),data); limpiarFormPregunta(); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); if(_reporteEnEdicion){ const rid=_reporteEnEdicion; _reporteEnEdicion=null; if(confirm('✔ Pregunta guardada.\n\n¿Responder al alumno que la reportó y cerrar su aviso?')){ await responderReporte(rid); } } };
+window.guardarPregunta=async()=>{ const enunciado=$('preg-enunciado').value.trim(); const opciones=['preg-op0','preg-op1','preg-op2','preg-op3'].map(id=>$(id).value.trim()); const correcta=parseInt($('preg-correcta').value); const explicacion=$('preg-explicacion').value.trim(); if(!enunciado||opciones.some(o=>!o))return alert('Rellena enunciado y las 4 opciones'); if(isNaN(correcta))return alert('Selecciona la respuesta correcta'); const data={enunciado,opciones,correcta,explicacion,creadaEn:serverTimestamp()}; const editId=$('preg-edit-id').value; if(editId)await updateDoc(doc(db,'temas',temaEditar.id,'preguntas',editId),data); else await addDoc(collection(db,'temas',temaEditar.id,'preguntas'),data); limpiarFormPregunta(); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); if(_reporteEnEdicion){ const rid=_reporteEnEdicion; _reporteEnEdicion=null; const t=prompt('✔ Pregunta guardada.\n\nEscribe un mensaje para el alumno (o deja vacío para no avisar):','Corregida, ¡gracias por avisar!'); if(t&&t.trim()){ await _enviarMensaje(rid,'profesor',t); } } };
 window.editarPregunta=(id)=>{ const p=preguntas.find(pr=>pr.id===id); if(!p)return; $('preg-edit-id').value=p.id; $('preg-enunciado').value=p.enunciado; p.opciones.forEach((op,i)=>$(`preg-op${i}`).value=op); $('preg-correcta').value=p.correcta; $('preg-explicacion').value=p.explicacion||''; $('btn-guardar-preg').textContent='💾 Actualizar pregunta'; $('preg-enunciado').focus(); };
 window.eliminarPregunta=async(id)=>{ if(!confirm('¿Eliminar esta pregunta?'))return; await deleteDoc(doc(db,'temas',temaEditar.id,'preguntas',id)); await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); };
 window.vaciarPreguntasTema=async()=>{ if(!temaEditar)return; const ps=preguntas.filter(p=>p.temaId===temaEditar.id); if(!ps.length)return alert('Este tema no tiene preguntas que borrar.'); if(!confirm(`⚠️ Vas a BORRAR las ${ps.length} preguntas de "${temaEditar.nombre}". El tema se mantiene (no se pierden sus estadísticas). Esta acción NO se puede deshacer. ¿Continuar?`))return; if(!confirm(`Confírmalo otra vez: se eliminarán ${ps.length} preguntas de forma permanente.`))return; const snap=await getDocs(collection(db,'temas',temaEditar.id,'preguntas')); let ok=0; for(const d of snap.docs){ try{ await deleteDoc(d.ref); ok++; }catch(e){} } await cargarTodasPreguntas(); renderPreguntasModal(); await renderAdminEstadisticas(); alert(`✔ ${ok} preguntas eliminadas. El tema "${temaEditar.nombre}" queda vacío y listo para importar el examen corregido.`); };
@@ -1088,39 +1071,49 @@ window.showAdminTab=(tab)=>{
   if(tab==='alumnos') cargarAdminAlumnos();
   if(tab==='analisis') cargarReportes();
 };
-window.cargarReportes = async () => {
-  const cont = $('admin-reportes-lista'); if(!cont) return;
-  cont.innerHTML = '<p class="empty-msg">Cargando…</p>';
-  try {
-    const s = await getDocs(query(collection(db,'reportes'), orderBy('fecha','desc')));
-    if (!s.size) { cont.innerHTML = '<p class="empty-msg">No hay avisos. 👍</p>'; return; }
-    cont.innerHTML = s.docs.map(d => {
-      const r = d.data();
-      return `<div class="admin-tema-item" style="align-items:flex-start;flex-direction:column;gap:6px">
-        <div style="font-weight:600">${(r.enunciado||'').slice(0,140)}</div>
-        <div style="font-size:12px;color:var(--text2)">Tema: ${r.temaNombre||'—'} · Correcta guardada: <span style="color:#4ade80">${r.respuestaCorrecta||'—'}</span></div>
-        ${r.motivo?`<div style="font-size:13px;color:#ffb37a">💬 ${r.motivo}</div>`:''}
-        <div style="font-size:11px;color:var(--text3)">Reportado por ${r.alumno||r.email||'alumno'}</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-          <button class="btn-sm btn-primary" onclick="editarDesdeReporte('${r.temaId}','${r.preguntaId}','${d.id}')">✏️ Editar pregunta</button>
-          <button class="btn-sm" style="background:rgba(212,80,10,0.15);border:1px solid rgba(212,80,10,0.4);color:#ff7d33" onclick="responderReporte('${d.id}')">💬 Responder al alumno</button>
-          <button class="btn-sm" style="background:rgba(255,255,255,0.06);color:var(--text2)" onclick="resolverReporte('${d.id}')">🗑 Descartar</button>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) { cont.innerHTML = '<p class="empty-msg">No se pudo cargar (¿faltan las reglas de Firebase para «reportes»?).</p>'; }
+// ── CONSULTAS / REPORTES CON CONVERSACIÓN (alumno ↔ profesor) ──
+function _mensajesHTML(r){
+  return (r.mensajes||[]).map(m=>{
+    const align = m.de==='profesor' ? 'flex-end' : 'flex-start';
+    const bg = m.de==='profesor' ? 'rgba(212,80,10,0.18)' : 'rgba(255,255,255,0.06)';
+    const quien = m.de==='profesor' ? '👨‍🏫 Profesor' : '🎓 Alumno';
+    const fecha = m.fecha ? new Date(m.fecha).toLocaleString('es-ES',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    return `<div style="display:flex;justify-content:${align};margin:4px 0"><div style="max-width:88%;background:${bg};border-radius:12px;padding:7px 11px">
+      <div style="font-size:10px;color:var(--text3);margin-bottom:2px">${quien} · ${fecha}</div>
+      <div style="font-size:13px;color:#f1f5f9;white-space:pre-wrap">${_esc(m.texto)}</div></div></div>`;
+  }).join('') || '<div style="font-size:12px;color:var(--text3)">Sin mensajes todavía</div>';
+}
+function _preguntaHTML(r){
+  const ops=(r.opciones||[]).map((o,i)=>`<div style="font-size:13px;color:${i===r.correcta?'#4ade80':'var(--text2)'};padding:2px 0">${'ABCD'[i]}) ${_esc(o)}${i===r.correcta?' ✔':''}</div>`).join('');
+  return `<details style="margin:6px 0"><summary style="cursor:pointer;font-size:13px;color:#ff7d33;font-weight:600">Ver la pregunta completa</summary>
+    <div style="margin-top:6px;padding:10px;background:rgba(255,255,255,0.03);border-radius:10px">
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px">${_esc(r.enunciado)}</div>${ops}
+      ${r.explicacion?`<div class="test-explicacion" style="display:block;margin-top:8px">💡 ${r.explicacion}</div>`:''}</div></details>`;
+}
+async function _enviarMensaje(reporteId, de, texto){
+  texto=(texto||'').trim(); if(!texto) return false;
+  const campos={ mensajes:arrayUnion({de,texto,fecha:new Date().toISOString()}), ultima:serverTimestamp(), estado: de==='profesor'?'respondida':'abierta' };
+  if(de==='profesor'){ campos.leidoAlumno=false; campos.leidoAdmin=true; } else { campos.leidoAdmin=false; campos.leidoAlumno=true; }
+  try{ await updateDoc(doc(db,'reportes',reporteId),campos); return true; }catch(e){ return false; }
+}
+window.enviarMensajeReporte = async (reporteId, de, inputId) => {
+  const el=document.getElementById(inputId); const texto=(el?.value||'').trim();
+  if(!texto) return;
+  const ok=await _enviarMensaje(reporteId,de,texto);
+  if(!ok) return alert('No se pudo enviar el mensaje.');
+  if(el) el.value='';
+  if(de==='profesor') cargarReportes(); else cargarMisConsultas();
 };
 window.resolverReporte = async (id) => {
-  if(!confirm('¿Descartar este aviso sin responder al alumno? (se elimina de la lista)')) return;
+  if(!confirm('¿Cerrar y borrar esta consulta? Se elimina para ti y para el alumno.')) return;
   try { await deleteDoc(doc(db,'reportes',id)); cargarReportes(); } catch(e){ alert('No se pudo eliminar.'); }
 };
-// Abre el editor con la pregunta reportada ya cargada (sin ir a buscarla).
 let _reporteEnEdicion = null;
 window.editarDesdeReporte = (temaId, preguntaId, reporteId) => {
   const tema = temas.find(t=>t.id===temaId);
   if (!tema) return alert('El tema de esta pregunta ya no existe.');
   const p = preguntas.find(pr=>pr.id===preguntaId && pr.temaId===temaId);
-  if (!p) return alert('Esa pregunta ya no existe (¿se borró?). Puedes responder al alumno o descartar el aviso.');
+  if (!p) return alert('Esa pregunta ya no existe (¿se borró?). Puedes responder en el chat igualmente.');
   _reporteEnEdicion = reporteId;
   temaEditar = tema;
   $('modal-tema-nombre').textContent = tema.nombre;
@@ -1128,22 +1121,52 @@ window.editarDesdeReporte = (temaId, preguntaId, reporteId) => {
   $('modal-preguntas').style.display='flex';
   editarPregunta(preguntaId);
 };
-// Escribe una respuesta que el alumno verá en su cuenta, y cierra el reporte.
-window.responderReporte = async (reporteId) => {
-  let rep;
-  try { const s = await getDoc(doc(db,'reportes',reporteId)); if(!s.exists()) { cargarReportes(); return alert('El reporte ya no existe.'); } rep = s.data(); }
-  catch(e){ return alert('No se pudo leer el reporte.'); }
-  const respuesta = prompt('Escribe la respuesta para el alumno (la verá en su cuenta):', 'Gracias por avisar. La pregunta ya está corregida.');
-  if (respuesta === null) return;
+// ADMIN: lista de consultas con su conversación
+window.cargarReportes = async () => {
+  const cont = $('admin-reportes-lista'); if(!cont) return;
+  cont.innerHTML = '<p class="empty-msg">Cargando…</p>';
   try {
-    if (rep.uid) await setDoc(doc(db,'alumnos',rep.uid,'avisos',reporteId), {
-      enunciado: rep.enunciado||'', temaNombre: rep.temaNombre||'',
-      respuesta: (respuesta||'').trim(), profesor: currentUser.email||'', fecha: serverTimestamp()
-    });
-    await deleteDoc(doc(db,'reportes',reporteId));
-    mostrarToast('✅ Respondido', 'El alumno verá tu respuesta en su cuenta.');
-    cargarReportes();
-  } catch(e){ alert('No se pudo enviar la respuesta.'); }
+    const s = await getDocs(query(collection(db,'reportes'), orderBy('ultima','desc')));
+    if (!s.size) { cont.innerHTML = '<p class="empty-msg">No hay consultas. 👍</p>'; return; }
+    cont.innerHTML = s.docs.map(d => {
+      const r = d.data(); const nuevo = r.leidoAdmin===false;
+      return `<div class="admin-tema-item" style="align-items:stretch;flex-direction:column;gap:6px">
+        <div style="font-weight:600">${nuevo?'🔴 ':''}${_esc((r.enunciado||'').slice(0,120))}</div>
+        <div style="font-size:11px;color:var(--text3)">Tema: ${_esc(r.temaNombre||'—')} · ${_esc(r.alumno||r.email||'alumno')}</div>
+        ${_preguntaHTML(r)}
+        <div style="background:rgba(0,0,0,0.15);border-radius:10px;padding:8px;margin:4px 0">${_mensajesHTML(r)}</div>
+        <textarea id="rep-msg-${d.id}" rows="2" placeholder="Escribe tu respuesta al alumno…" style="width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#f1f5f9;padding:8px;font-size:13px;font-family:'Outfit',sans-serif"></textarea>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <button class="btn-sm btn-primary" onclick="enviarMensajeReporte('${d.id}','profesor','rep-msg-${d.id}')">💬 Responder</button>
+          <button class="btn-sm" style="background:rgba(255,255,255,0.06);color:var(--text2)" onclick="editarDesdeReporte('${r.temaId}','${r.preguntaId}','${d.id}')">✏️ Editar pregunta</button>
+          <button class="btn-sm" style="background:rgba(255,255,255,0.06);color:var(--text2)" onclick="resolverReporte('${d.id}')">🗑 Cerrar</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { cont.innerHTML = '<p class="empty-msg">No se pudo cargar. ¿Publicaste las reglas nuevas de «reportes»?</p>'; }
+};
+// ALUMNO: sus consultas con la conversación
+window.cargarMisConsultas = async () => {
+  const cont = $('mis-consultas-lista'); if(!cont) return;
+  if (modoVistaPrevia) { cont.innerHTML='<p class="empty-msg">Modo vista previa — sin consultas reales</p>'; return; }
+  cont.innerHTML='<p class="empty-msg">Cargando…</p>';
+  try{
+    const s = await getDocs(query(collection(db,'reportes'), where('uid','==',currentUser.uid)));
+    if(s.empty){ cont.innerHTML='<p class="empty-msg">No has hecho ninguna consulta.<br>En un test, pulsa <strong>⚠️ Reportar error</strong> para preguntar sobre una pregunta.</p>'; return; }
+    const docs = [...s.docs].sort((a,b)=>((b.data().ultima&&b.data().ultima.toMillis&&b.data().ultima.toMillis())||0)-((a.data().ultima&&a.data().ultima.toMillis&&a.data().ultima.toMillis())||0));
+    cont.innerHTML = docs.map(d=>{
+      const r=d.data(); const nuevo=r.leidoAlumno===false;
+      return `<div class="card" style="margin-bottom:14px${nuevo?';border-color:rgba(212,80,10,0.6)':''}">
+        <div style="font-weight:700;font-size:14px;margin-bottom:2px">${nuevo?'🔴 ':'💬 '}${_esc((r.enunciado||'').slice(0,110))}</div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:4px">${_esc(r.temaNombre||'')}</div>
+        ${_preguntaHTML(r)}
+        <div style="background:rgba(0,0,0,0.15);border-radius:10px;padding:8px;margin:4px 0">${_mensajesHTML(r)}</div>
+        <textarea id="cons-msg-${d.id}" rows="2" placeholder="Escribe otra duda…" style="width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#f1f5f9;padding:8px;font-size:13px;font-family:'Outfit',sans-serif"></textarea>
+        <button class="btn-sm btn-primary" style="margin-top:6px" onclick="enviarMensajeReporte('${d.id}','alumno','cons-msg-${d.id}')">Enviar 💬</button>
+      </div>`;
+    }).join('');
+    s.docs.forEach(d=>{ if(d.data().leidoAlumno===false) updateDoc(doc(db,'reportes',d.id),{leidoAlumno:true}).catch(()=>{}); });
+  }catch(e){ cont.innerHTML='<p class="empty-msg">No se pudieron cargar tus consultas.</p>'; }
 };
 window.analizarFalladas = async () => {
   const cont = $('admin-falladas-global'); if(!cont) return;
@@ -1571,7 +1594,6 @@ body {
         <div class="stat-card"><div class="stat-num" id="stat-puntos">0</div><div class="stat-label">Puntos</div></div>
         <div class="stat-card"><div class="stat-num" id="stat-logros">0/0</div><div class="stat-label">Logros</div></div>
       </div>
-      <div id="avisos-alumno"></div>
       <button onclick="showAlumnoTab('temas')" style="width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:16px;padding:20px;color:#fff;font-size:17px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 10px 30px rgba(212,80,10,0.35)">▶ Empezar test</button>
       <div class="card"><div class="card-title">📋 Últimos resultados</div><div id="historial-lista"></div></div>
     </div>
@@ -1631,6 +1653,9 @@ body {
       <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Las preguntas que marcas con 🚩 durante los tests se guardan aquí, ordenadas por tema. Despliega cada una para ver la respuesta correcta y la explicación.</p>
       <button id="revisar-test-btn" onclick="iniciarTestMarcadas()" style="display:none;width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:14px;padding:16px;color:#fff;font-size:15px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;align-items:center;justify-content:center;gap:8px">▶ Hacer un test con estas preguntas</button>
       <div id="revisar-lista"></div>
+      <h2 style="font-size:20px;font-weight:700;margin:28px 0 6px">💬 Mis consultas</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Cuando reportas una pregunta en un test, aparece aquí. Puedes ver la pregunta completa y hablar con el profesor.</p>
+      <div id="mis-consultas-lista"></div>
     </div>
     <div class="tab-panel alumno-tab" data-tab="progreso">
       <h2 style="font-size:20px;font-weight:700;margin-bottom:18px">Mi progreso</h2>

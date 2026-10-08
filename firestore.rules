@@ -55,12 +55,14 @@ service cloud.firestore {
       }
     }
 
-    // ── Errores reportados por los alumnos ───────────────────────
-    // Solo un alumno ACTIVADO puede enviar un reporte.
-    // Solo un ADMIN puede leerlos, marcarlos resueltos o borrarlos.
+    // ── Consultas/reportes con conversación (alumno ↔ profesor) ──
+    // El alumno activado crea su consulta (con su propio uid) y puede LEER y
+    // ESCRIBIR (seguir la conversación) solo en SUS propias consultas.
+    // El admin ve y responde todas; solo el admin puede borrar.
     match /reportes/{reporteId} {
-      allow create: if estaActivado();
-      allow read, update, delete: if esAdmin();
+      allow create: if estaActivado() && request.resource.data.uid == request.auth.uid;
+      allow read, update: if esAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
+      allow delete: if esAdmin();
     }
   }
 }
