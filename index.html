@@ -665,6 +665,48 @@ window.iniciarTestMarcadas = () => {
   iniciarTestComun();
 };
 window.quitarMarcadaRevisar = (pid) => { quitarMarcada(pid); preguntasMarcadas.delete(pid); renderRevisar(); };
+// Repasar los fallos del test recién terminado
+window.repasarFallosUltimo = () => {
+  const ids = window._ultimoTestFallos || [];
+  const ps = ids.map(id=>preguntas.find(p=>p.id===id)).filter(Boolean);
+  if(!ps.length) return alert('¡No tuviste fallos en este test! 🎉');
+  $('pantalla-resultado').style.display='none';
+  testActivo = { tipo:'repaso', temaId:'repaso-fallos', temaNombre:'Repaso de tus fallos', preguntas:[...ps].sort(()=>Math.random()-.5), indice:0 };
+  iniciarTestComun();
+};
+// ── MIS FALLADAS (todas, por tema, con opción de quitar al aprenderlas) ──
+function _falladaItem(p){
+  const ops = p.opciones.map((o,i)=>`<div style="font-size:13px;color:${i===p.correcta?'#4ade80':'var(--text2)'};padding:3px 0">${'ABCD'[i]}) ${_esc(o)}${i===p.correcta?' ✔':''}</div>`).join('');
+  return `<details style="border-top:1px solid var(--border);padding:10px 2px">
+    <summary style="cursor:pointer;font-weight:600;font-size:14px">❌ ${_esc(p.enunciado)}</summary>
+    <div style="margin-top:8px">${ops}${p.explicacion?`<div class="test-explicacion" style="display:block;margin-top:8px">💡 ${p.explicacion}</div>`:''}
+      <button class="btn-sm" style="margin-top:10px;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:#4ade80" onclick="quitarFallada('${p.id}')">✓ Ya me la sé (quitar)</button>
+    </div>
+  </details>`;
+}
+window.cargarMisFalladas = async () => {
+  const cont=$('mis-falladas-lista'), btn=$('falladas-test-btn'); if(!cont) return;
+  if(modoVistaPrevia){ cont.innerHTML='<p class="empty-msg">Modo vista previa — sin falladas reales</p>'; if(btn)btn.style.display='none'; return; }
+  cont.innerHTML='<p class="empty-msg">Cargando…</p>';
+  try{
+    const s=await getDocs(collection(db,'alumnos',currentUser.uid,'falladas'));
+    const ps=s.docs.map(d=>d.id).map(id=>preguntas.find(p=>p.id===id)).filter(Boolean);
+    if(!ps.length){ cont.innerHTML='<p class="empty-msg">¡No tienes preguntas falladas! 🎉<br>Las que falles en los tests aparecerán aquí para repasarlas.</p>'; if(btn)btn.style.display='none'; return; }
+    if(btn) btn.style.display='flex';
+    const porTema={};
+    ps.forEach(p=>{ const t=temas.find(x=>x.id===p.temaId); const nombre=t?t.nombre:'Otros'; (porTema[nombre]=porTema[nombre]||[]).push(p); });
+    cont.innerHTML=Object.keys(porTema).sort().map(nombre=>`
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-title">📚 ${_esc(nombre)} <span style="color:var(--text2);font-weight:400;font-size:13px">· ${porTema[nombre].length}</span></div>
+        ${porTema[nombre].map(_falladaItem).join('')}
+      </div>`).join('');
+  }catch(e){ cont.innerHTML='<p class="empty-msg">No se pudieron cargar tus falladas.</p>'; }
+};
+window.quitarFallada = async (pid) => {
+  const cont=$('mis-falladas-lista');
+  try{ await deleteDoc(doc(db,'alumnos',currentUser.uid,'falladas',pid)); }catch(e){}
+  cargarMisFalladas();
+};
 function _revisarItem(p, num){
   const ops = p.opciones.map((o,i)=>`<div style="font-size:13px;color:${i===p.correcta?'#4ade80':'var(--text2)'};padding:3px 0">${'ABCD'[i]}) ${_esc(o)}${i===p.correcta?' ✔':''}</div>`).join('');
   return `<details style="border-top:1px solid var(--border);padding:10px 2px">
@@ -833,6 +875,8 @@ window.finalizarTest = async () => {
     `<br><span style="display:inline-block;margin-top:6px;font-size:20px;font-weight:800;color:#ff7d33">📝 Nota: ${nota10.toFixed(2)} / 10</span>`+
     (penal>0?`<br><span style="font-size:12px;color:var(--text2)">Penalización: 1 cada ${penal} fallos</span>`:'')+
     `<br><span style="font-size:13px;color:var(--text2)">+${puntos} puntos</span>`;
+  window._ultimoTestFallos = ps.filter(q=>respuestasTest[q.id]!==undefined && respuestasTest[q.id]!==q.correcta).map(q=>q.id);
+  $('btn-repasar-fallos').style.display = window._ultimoTestFallos.length ? '' : 'none';
   $('pantalla-resultado').style.display='flex';
   renderTest();
   // 2) Guardar en SEGUNDO PLANO, en paralelo y con manejo de errores
@@ -890,7 +934,7 @@ window.showAlumnoTab=(tab)=>{
   document.querySelector(`.alumno-tab[data-tab="${tab}"]`)?.classList.add('active');
   if(tab==='inicio') renderInicio();
   if(tab==='temas') renderTemas();
-  if(tab==='revisar'){ renderRevisar(); cargarMisConsultas(); }
+  if(tab==='revisar'){ renderRevisar(); cargarMisFalladas(); cargarMisConsultas(); }
   if(tab==='progreso') renderProgreso();
   if(tab==='ranking') cargarRanking();
   if(tab==='test') renderTest();
@@ -1710,6 +1754,10 @@ body {
       <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Las preguntas que marcas con 🚩 durante los tests se guardan aquí, ordenadas por tema. Despliega cada una para ver la respuesta correcta y la explicación.</p>
       <button id="revisar-test-btn" onclick="iniciarTestMarcadas()" style="display:none;width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:14px;padding:16px;color:#fff;font-size:15px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;align-items:center;justify-content:center;gap:8px">▶ Hacer un test con estas preguntas</button>
       <div id="revisar-lista"></div>
+      <h2 style="font-size:20px;font-weight:700;margin:28px 0 6px">❌ Mis preguntas falladas</h2>
+      <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Todas las preguntas que has fallado, por tema. Despliega para ver la correcta, y pulsa "Ya me la sé" para quitarla cuando la domines.</p>
+      <button id="falladas-test-btn" onclick="iniciarTestFalladas()" style="display:none;width:100%;margin-bottom:18px;background:linear-gradient(135deg,#D4500A,#b8440a);border:none;border-radius:14px;padding:16px;color:#fff;font-size:15px;font-weight:800;font-family:'Outfit',sans-serif;cursor:pointer;align-items:center;justify-content:center;gap:8px">▶ Repasar mis falladas (test)</button>
+      <div id="mis-falladas-lista"></div>
       <h2 style="font-size:20px;font-weight:700;margin:28px 0 6px">💬 Mis consultas</h2>
       <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Cuando reportas una pregunta en un test, aparece aquí. Puedes ver la pregunta completa y hablar con el profesor.</p>
       <div id="mis-consultas-lista"></div>
@@ -1737,6 +1785,7 @@ body {
     <div class="resultado-detalle" id="resultado-detalle"></div>
     <div class="resultado-btns">
       <button class="btn-nav primary" onclick="verRespuestas()">Ver respuestas</button>
+      <button class="btn-nav" id="btn-repasar-fallos" onclick="repasarFallosUltimo()" style="display:none">🔄 Repasar fallos</button>
       <button class="btn-nav" onclick="nuevoTest()">Volver al inicio</button>
     </div>
   </div>
