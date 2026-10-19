@@ -1184,6 +1184,27 @@ window.resolverReporte = async (id) => {
   try { await deleteDoc(doc(db,'reportes',id)); cargarReportes(); } catch(e){ alert('No se pudo eliminar.'); }
 };
 let _reporteEnEdicion = null;
+// Buscador de preguntas (admin): por palabras/frase, sin importar acentos.
+function _norm(s){ return (s||'').toString().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,''); }
+window.buscarPreguntas = () => {
+  const cont = $('buscar-resultados'); if(!cont) return;
+  const q = _norm($('buscar-pregunta').value.trim());
+  if(q.length < 2){ cont.innerHTML = q ? '<p class="empty-msg">Escribe al menos 2 letras…</p>' : ''; return; }
+  const palabras = q.split(/\s+/);
+  const res = preguntas.filter(p=>{
+    const txt = _norm([p.enunciado, ...(p.opciones||[]), p.explicacion].join(' '));
+    return palabras.every(w=>txt.includes(w));
+  }).slice(0, 60);
+  if(!res.length){ cont.innerHTML = '<p class="empty-msg">Sin coincidencias.</p>'; return; }
+  cont.innerHTML = `<div style="font-size:12px;color:var(--text2);margin-bottom:8px">${res.length} resultado(s)${res.length===60?' (primeros 60)':''}</div>`+
+    res.map(p=>{
+      const t = temas.find(x=>x.id===p.temaId);
+      return `<div class="admin-tema-item" style="align-items:center;gap:10px">
+        <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">${_esc((p.enunciado||'').slice(0,160))}</div><div style="font-size:11px;color:var(--text3)">${_esc(t?t.nombre:'(sin tema)')}</div></div>
+        <button class="btn-sm btn-primary" style="white-space:nowrap" onclick="editarPreguntaDirecto('${p.temaId}','${p.id}')">✏️ Editar</button>
+      </div>`;
+    }).join('');
+};
 // Abre el editor con una pregunta cargada (desde el análisis de falladas, sin reporte).
 window.editarPreguntaDirecto = (temaId, preguntaId) => {
   const tema = temas.find(t=>t.id===temaId);
@@ -1848,6 +1869,12 @@ body {
       </div>
     </div>
     <div class="tab-panel admin-tab" data-tab="temas">
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">🔎 Buscar pregunta</div>
+        <p style="color:var(--text2);font-size:13px;margin-bottom:10px">Escribe palabras clave o una frase de la pregunta y edítala directamente, sin ir tema por tema.</p>
+        <input id="buscar-pregunta" type="text" placeholder="Ej: extintor CO2 fuego eléctrico" oninput="buscarPreguntas()" style="width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:#f1f5f9;padding:12px 14px;font-size:14px;font-family:'Outfit',sans-serif;outline:none">
+        <div id="buscar-resultados" style="margin-top:12px;max-height:440px;overflow-y:auto"></div>
+      </div>
       <div class="card">
         <div class="card-title">➕ Nuevo tema</div>
         <div class="admin-input-row">
