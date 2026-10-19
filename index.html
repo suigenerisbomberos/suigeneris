@@ -800,6 +800,7 @@ function renderTest() {
   $('test-titulo').textContent=testActivo.temaNombre;
   $('test-prog-bar').style.width=`${((indice+1)/total)*100}%`;
   $('test-contador').textContent=`Pregunta ${indice+1} de ${total}`;
+  { const b=$('btn-salir-test'); if(b) b.textContent=testFinalizado?'← Resultado':'← Salir'; }
   $('test-pregunta').textContent=p.enunciado;
   const respondida=respuestasTest[p.id]!==undefined, verRes=testFinalizado||(respondida&&!modoExamenGlobal);
   $('test-opciones').innerHTML=p.opciones.map((op,i)=>{
@@ -925,6 +926,8 @@ window.reportarPregunta = async () => {
   } catch(e) { alert('No se pudo enviar. Inténtalo más tarde.'); }
 };
 window.verRespuestas=()=>{$('pantalla-resultado').style.display='none';testActivo.indice=0;renderTest();};
+// En repaso vuelve a la pantalla de la nota; durante el test, sale.
+window.salirOResultado=()=>{ if(testActivo && testFinalizado){ $('pantalla-resultado').style.display='flex'; } else { salirDelTest(); } };
 window.nuevoTest=()=>{$('pantalla-resultado').style.display='none';testActivo=null;testFinalizado=false;pararTimer();salirModoTest();showAlumnoTab('inicio');renderInicio();};
 
 window.showAlumnoTab=(tab)=>{
@@ -1715,7 +1718,7 @@ body {
         </div>
         <div id="test-activo" style="display:none">
           <div class="test-header">
-            <button class="btn-salir-test" onclick="salirDelTest()">← Salir</button>
+            <button class="btn-salir-test" id="btn-salir-test" onclick="salirOResultado()">← Salir</button>
             <div class="test-titulo" id="test-titulo" style="flex:1;min-width:0"></div>
             <div class="test-timer" id="test-timer"></div>
           </div>
