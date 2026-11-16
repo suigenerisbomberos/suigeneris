@@ -993,6 +993,7 @@ window.renderCallejero = () => {
         .cal-modo-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text2);border-radius:12px;padding:9px 15px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
         .cal-modo-btn.active{background:linear-gradient(135deg,#D4500A,#b8440a);color:#fff;border-color:transparent}
         .cal-admin-nota{font-size:12px;color:var(--text3)}
+        .cal-sel{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:#f1f5f9;border-radius:12px;padding:9px 12px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
         .cal-barra-info{font-size:13px;color:var(--text2);background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:10px}
         #cal-map{width:100%;height:60vh;min-height:360px;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:#1a1f2e}
         .cal-info{margin-top:12px}
@@ -1005,11 +1006,11 @@ window.renderCallejero = () => {
             <button class="cal-modo-btn active" data-m="estudiar" onclick="calSetModo('estudiar')">📖 Estudiar</button>
             <button class="cal-modo-btn" data-m="localiza" onclick="calSetModo('localiza')">🎯 Localiza</button>
           </div>
+          <select id="cal-distrito" class="cal-sel" onchange="calSetDistrito(this.value)"><option value="">🏙️ Toda Málaga</option></select>
           ${isAdmin?'<span class="cal-admin-nota">👁️ Vista admin · módulo en obras</span>':''}
         </div>
         <div id="cal-barra-info" class="cal-barra-info"></div>
         <div id="cal-map"></div>
-        <div id="cal-info" class="cal-info"></div>
       </div>`;
   }
   calInit();
@@ -1020,7 +1021,10 @@ const CAL_MAPS_KEY='AIzaSyD4iLfl5RRP8BNpoIWplY5AyC-MsWZuD7w';
 const CAL_CENTRO={lat:36.7213,lng:-4.4214};
 const CAL_SINLAB=[{featureType:'all',elementType:'labels',stylers:[{visibility:'off'}]}];
 const CAL_PALETA=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7'];
-let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, _calVias=null, calCargando=false;
+let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, calCargando=false;
+let calDistrito=null, calDistritos=[], calInfoBox=null;
+// Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
+function calSetInfo(html){ if(calInfoBox) calInfoBox.innerHTML = html || ''; }
 
 function calCargarMaps(){
   if(window.google&&window.google.maps) return Promise.resolve();
@@ -1045,10 +1049,15 @@ async function calInit(){
       styles:CAL_SINLAB,
       mapTypeControlOptions:{mapTypeIds:['roadmap','satellite']}
     });
+    // Cartel de info DENTRO del mapa (para que se vea a pantalla completa)
+    calInfoBox=document.createElement('div');
+    calInfoBox.style.cssText='margin:12px;max-width:92%';
+    calMap.controls[google.maps.ControlPosition.BOTTOM_CENTER].push(calInfoBox);
     calMap.data.setStyle(calEstiloVia);
     calMap.data.addListener('click', calClickFeature); // clic justo sobre la calle
     calMap.addListener('click', calClickMapa);         // clic cerca de la calle
     await calCargarCalles();
+    await calCargarDistritos();
     await calCargarColoresAlumno();
   }
   calSetModo(calModo);
@@ -1070,7 +1079,7 @@ async function calCargarCalles(){
           segs.push([a[0]*CAL_KX, a[1]*CAL_KY, b[0]*CAL_KX, b[1]*CAL_KY]);
         }
       }
-      calRaw.push({cod,n,segs});
+      calRaw.push({cod,n,d:f.properties.d,segs});
     }
   }
   catch(e){ console.warn('calles callejero', e); }
@@ -1101,6 +1110,9 @@ function calTolerancia(latLng){
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
   if(calSel===cod) return {strokeColor:'#ffffff', strokeWeight:5, strokeOpacity:1, zIndex:20};
+  // Si hay un distrito elegido, las demás calles se apagan para que destaque
+  if(calDistrito && feature.getProperty('d')!==calDistrito)
+    return {strokeColor:'#64748b', strokeWeight:1, strokeOpacity:0.12, zIndex:0};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10};
   return {strokeColor:'#ff7d33', strokeWeight:3, strokeOpacity:0.75, zIndex:1};
@@ -1110,9 +1122,9 @@ window.calSetModo=(m)=>{
   calModo=m; calSel=null;
   document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
   if(calMap) calMap.data.setStyle(calEstiloVia);
-  const info=$('cal-info'), barra=$('cal-barra-info');
-  if(m==='estudiar'){ barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; info.innerHTML=''; }
-  else{ calAciertos=0; calFallos=0; barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
+  const barra=$('cal-barra-info'); calSetInfo('');
+  if(m==='estudiar'){ if(barra) barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; }
+  else{ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
 };
 
 // Clic directo sobre una calle (feature de Google)
@@ -1124,7 +1136,7 @@ function calClickMapa(ev){
   if(!calRaw.length) return;
   const {v,d}=calCercana(ev.latLng);
   if(!v || d>calTolerancia(ev.latLng)){
-    if(calModo==='estudiar'){ $('cal-info').innerHTML='<div class="cal-ficha" style="color:var(--text3);font-size:13px">Toca más cerca de una calle…</div>'; }
+    if(calModo==='estudiar'){ calSetInfo('<div class="cal-ficha" style="color:#94a3b8;font-size:13px">Toca más cerca de una calle…</div>'); }
     return;
   }
   calElegir(v.cod, v.n);
@@ -1137,14 +1149,14 @@ function calElegir(cod, nom){
 
 function calInfoEstudiar(cod, nom){
   const chips=CAL_PALETA.map(c=>`<button onclick="calPonColor(${cod},'${c}')" style="width:30px;height:30px;border-radius:50%;border:2px solid #fff;background:${c};cursor:pointer" title="Poner este color"></button>`).join('');
-  $('cal-info').innerHTML=`
+  calSetInfo(`
     <div class="cal-ficha">
       <div class="cal-ficha-nom">${nom}</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px">
         <span style="font-size:13px;color:var(--text2)">Color:</span>${chips}
         <button onclick="calPonColor(${cod},null)" class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1">Quitar</button>
       </div>
-    </div>`;
+    </div>`);
 }
 
 window.calPonColor=(cod,color)=>{
@@ -1164,31 +1176,47 @@ async function calCargarColoresAlumno(){
   }catch(e){}
 }
 
+function _capNom(s){ return (s||'').toLowerCase().replace(/(^|\s)\S/g, m=>m.toUpperCase()); }
+async function calCargarDistritos(){
+  try{ const r=await fetch('callejero/data/cal_distritos.json'); calDistritos=await r.json(); }
+  catch(e){ calDistritos=[]; }
+  const sel=$('cal-distrito'); if(!sel) return;
+  sel.innerHTML='<option value="">🏙️ Toda Málaga</option>' +
+    calDistritos.map(d=>`<option value="${d.num}">${_capNom(d.nombre)}</option>`).join('');
+}
+window.calSetDistrito=(v)=>{
+  calDistrito = (v==='' ? null : Number(v));
+  if(calMap) calMap.data.setStyle(calEstiloVia);
+  const d = calDistrito!=null ? calDistritos.find(x=>x.num===calDistrito) : null;
+  if(d && d.sw && d.ne){ calMap.fitBounds({south:d.sw[0], west:d.sw[1], north:d.ne[0], east:d.ne[1]}); }
+  else { calMap.setCenter(CAL_CENTRO); calMap.setZoom(13); }
+  if(calModo==='localiza') calNuevaLocaliza();
+};
+
 function calListaVias(){
-  if(_calVias) return _calVias;
-  _calVias=[]; calMap.data.forEach(f=>{ _calVias.push({cod:f.getProperty('cod'), n:f.getProperty('n')}); });
-  return _calVias;
+  if(calDistrito!=null) return calRaw.filter(v=>v.d===calDistrito);
+  return calRaw;
 }
 function calNuevaLocaliza(){
-  const vs=calListaVias(); if(!vs.length){ $('cal-info').innerHTML=''; return; }
+  const vs=calListaVias(); if(!vs.length){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay calles en este distrito.</div>'); return; }
   calObjetivo=vs[Math.floor(Math.random()*vs.length)];
   calSel=null; calMap.data.setStyle(calEstiloVia);
-  $('cal-info').innerHTML=`
+  calSetInfo(`
     <div class="cal-ficha">
       <div style="font-size:13px;color:var(--text2)">Localiza en el mapa:</div>
       <div class="cal-ficha-nom">${calObjetivo.n}</div>
       <div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div>
-    </div>`;
+    </div>`);
 }
 window.calNuevaLocaliza=calNuevaLocaliza;
 function calComprobarLocaliza(cod,nom){
   if(!calObjetivo) return;
   if(cod===calObjetivo.cod){
     calAciertos++; calSel=cod; calMap.data.setStyle(calEstiloVia);
-    $('cal-info').innerHTML=`<div class="cal-ficha" style="border-color:rgba(34,197,94,0.5)"><div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${nom}</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Siguiente →</button></div>`;
+    calSetInfo(`<div class="cal-ficha" style="border-color:rgba(34,197,94,0.5)"><div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${nom}</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Siguiente →</button></div>`);
   }else{
     calFallos++;
-    $('cal-info').innerHTML=`<div class="cal-ficha" style="border-color:rgba(248,113,113,0.5)"><div style="color:#f87171;font-weight:800">❌ Esa es ${nom}</div><div style="font-size:13px;color:var(--text2);margin-top:4px">Buscabas: <b>${calObjetivo.n}</b></div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Otra →</button></div>`;
+    calSetInfo(`<div class="cal-ficha" style="border-color:rgba(248,113,113,0.5)"><div style="color:#f87171;font-weight:800">❌ Esa es ${nom}</div><div style="font-size:13px;color:var(--text2);margin-top:4px">Buscabas: <b>${calObjetivo.n}</b></div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Otra →</button></div>`);
   }
 }
 
