@@ -19,6 +19,12 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/alumnos/$(request.auth.uid))
         && get(/databases/$(database)/documents/alumnos/$(request.auth.uid)).data.activado == true;
     }
+    // Comprueba que el alumno tiene ACCESO AL CALLEJERO concedido por un admin.
+    function tieneCallejero() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/alumnos/$(request.auth.uid))
+        && get(/databases/$(database)/documents/alumnos/$(request.auth.uid)).data.acceso_callejero == true;
+    }
 
     // ── Contenido del curso ──────────────────────────────────────
     // Lo LEE solo un alumno ACTIVADO (o un admin). Un registrado sin activar
@@ -52,6 +58,22 @@ service cloud.firestore {
       // privadas. Solo el dueño de la ficha o un admin.
       match /{documento=**} {
         allow read, write: if estaLogueado() && (request.auth.uid == uid || esAdmin());
+      }
+    }
+
+    // ── CALLEJERO: contenido compartido (vías, tramos, barrios, puntos…) ──
+    // TODO el contenido del Callejero cuelga de /callejero/... Solo lo LEE un
+    // alumno con ACCESO AL CALLEJERO (o un admin). Quien no tenga permiso no
+    // puede leer los datos aunque escriba la dirección a mano. Solo el ADMIN
+    // crea/edita/borra. Los datos personales de cada alumno (sus colores, su
+    // actividad, sus resultados) van en subcolecciones de alumnos/{uid} y ya
+    // están protegidos por la regla de alumnos de arriba.
+    match /callejero/{docId} {
+      allow read:  if tieneCallejero() || esAdmin();
+      allow write: if esAdmin();
+      match /{resto=**} {
+        allow read:  if tieneCallejero() || esAdmin();
+        allow write: if esAdmin();
       }
     }
 

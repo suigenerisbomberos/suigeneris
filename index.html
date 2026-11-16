@@ -36,6 +36,21 @@ const db = getFirestore(app);
 let currentUser = null;
 let isAdmin = false;
 let modoVistaPrevia = false;
+
+// ── CALLEJERO ────────────────────────────────────────────────
+// Mientras construimos el módulo Callejero lo dejamos "en obras": la pestaña
+// solo la ven los administradores (y en Vista alumno). Cuando esté listo para
+// los alumnos, cambiar a false y la pestaña aparecerá para todos (los que no
+// tengan acceso verán el aviso para pedirlo a la academia).
+const CALLEJERO_EN_OBRAS = true;
+// Permisos por alumno. Test: lo tienen por defecto (los alumnos actuales lo
+// conservan); solo se pierde si un admin lo quita a mano. Callejero: NO por
+// defecto; solo si un admin lo concede.
+const tieneTest = (a) => !!a && a.acceso_test !== false;
+const tieneCallejero = (a) => !!a && a.acceso_callejero === true;
+// ¿Puede ESTE usuario usar el Callejero ahora mismo? Los admin siempre (para
+// probarlo, también en Vista alumno). Los alumnos, solo con permiso.
+const puedeVerCallejero = () => isAdmin || tieneCallejero(alumnoData);
 let bloques = [], temas = [], preguntas = [], alumnoData = null;
 let testActivo = null, respuestasTest = {}, preguntasMarcadas = new Set();
 let marcadasGuardadas = new Set(); // preguntas marcadas 🚩 para revisar (persistente por alumno)
@@ -344,6 +359,7 @@ window.activarVistaPrevia = async () => {
   showScreen('alumno');
   await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
   renderInicio(); renderTemas(); renderProgreso();
+  actualizarVisibilidadCallejero();
   showAlumnoTab('inicio');
   mostrarToast('👁️ Modo Vista Previa', 'Estás viendo la plataforma como un alumno');
 };
@@ -383,6 +399,7 @@ async function cargarAlumno() {
     try { await cargarProgresoRemoto(); } catch(e){} // progreso de test desde otros dispositivos
   }
   renderInicio(); renderTemas(); renderProgreso();
+  actualizarVisibilidadCallejero();
   showAlumnoTab('inicio');
 }
 
@@ -941,6 +958,39 @@ window.showAlumnoTab=(tab)=>{
   if(tab==='progreso') renderProgreso();
   if(tab==='ranking') cargarRanking();
   if(tab==='test') renderTest();
+  if(tab==='callejero') renderCallejero();
+};
+
+// Muestra u oculta el botón de la pestaña Callejero. Durante las obras solo lo
+// ven los admin (también en Vista alumno); al lanzarlo, lo ven todos.
+function actualizarVisibilidadCallejero(){
+  const btn = $('tab-btn-callejero'); if(!btn) return;
+  btn.style.display = (isAdmin || !CALLEJERO_EN_OBRAS) ? '' : 'none';
+}
+
+// Contenido de la pestaña Callejero. De momento: aviso de acceso (sin permiso)
+// o cartel de "en construcción" (admin/alumno con acceso). Aquí irán luego los
+// modos (Estudiar, Localiza, etc.).
+window.renderCallejero = () => {
+  const c = $('callejero-cont'); if(!c) return;
+  if(!puedeVerCallejero()){
+    c.innerHTML = `
+      <div style="max-width:460px;margin:40px auto;text-align:center;background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid rgba(212,80,10,0.25);border-radius:24px;padding:48px 32px;box-shadow:var(--shadow)">
+        <div style="font-size:64px;margin-bottom:18px">🔒</div>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--gold);letter-spacing:2px;margin-bottom:12px">CALLEJERO DE MÁLAGA</div>
+        <p style="color:var(--text2);font-size:14px;line-height:1.7;margin-bottom:8px">Esta sección prepara la prueba de callejero de la oposición. Tu cuenta todavía <strong>no tiene acceso</strong> al Callejero.</p>
+        <p style="color:var(--text2);font-size:14px;line-height:1.7">Pídeselo a la academia para activarlo. 🚒</p>
+      </div>`;
+    return;
+  }
+  // Con acceso (o admin): por ahora, cartel de obras.
+  c.innerHTML = `
+    <div style="max-width:520px;margin:40px auto;text-align:center;background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid rgba(212,80,10,0.25);border-radius:24px;padding:48px 32px;box-shadow:var(--shadow)">
+      <div style="font-size:64px;margin-bottom:18px">🚧🗺️</div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--gold);letter-spacing:2px;margin-bottom:12px">CALLEJERO EN CONSTRUCCIÓN</div>
+      <p style="color:var(--text2);font-size:14px;line-height:1.7">Estamos montando el módulo del Callejero de Málaga: mapa, calles, barrios, puntos de interés, recorridos y exámenes.</p>
+      <p style="color:var(--text3);font-size:12px;line-height:1.7;margin-top:10px">${isAdmin?'👁️ Solo tú (admin) ves esto. Los alumnos aún no ven la pestaña.':'Muy pronto disponible.'}</p>
+    </div>`;
 };
 
 async function cargarAdmin() {
@@ -1087,7 +1137,12 @@ window.cargarAdminAlumnos = async () => {
       html += '</div>';
     }
     if (activados.length) {
-      html += `<div style="font-weight:700;color:#9999bb;margin-bottom:10px;font-size:13px">✅ Alumnos activos (${activados.length})</div>`;
+      html += `<div style="font-weight:700;color:#9999bb;margin-bottom:10px;font-size:13px">✅ Alumnos activos (${activados.length})</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+          <span style="font-size:12px;color:#888;align-self:center">Acceso Callejero en bloque:</span>
+          <button class="btn-sm" style="background:rgba(74,222,128,0.18);color:#4ade80" onclick="callejeroATodos(true)">🗺️ Dar a todos</button>
+          <button class="btn-sm btn-danger" onclick="callejeroATodos(false)">🚫 Quitar a todos</button>
+        </div>`;
       const devCounts = {};
       await Promise.all(activados.map(async a => {
         try { const ds=await getDocs(collection(db,'alumnos',a.id,'dispositivos')); devCounts[a.id]=ds.size; } catch(e){ devCounts[a.id]=0; }
@@ -1095,9 +1150,14 @@ window.cargarAdminAlumnos = async () => {
       html += activados.map(a => {
         const s=a.estadisticas||{}, pct=s.totalPreguntas>0?Math.round((s.totalAciertos/s.totalPreguntas)*100):0;
         const devN=devCounts[a.id]||0;
-        return `<div class="admin-tema-item"><div style="flex:1"><div style="font-weight:600">${a.nombre}</div>
-          <div style="font-size:12px;color:#888">${a.email} · ${s.testsRealizados||0} tests · ${pct}% · 📱 ${devN}/${MAX_DISPOSITIVOS}</div></div>
-          <div style="display:flex;gap:6px;flex-shrink:0">
+        const cT = a.acceso_test !== false;      // Test: por defecto SÍ
+        const cC = a.acceso_callejero === true;  // Callejero: por defecto NO
+        return `<div class="admin-tema-item" style="flex-wrap:wrap"><div style="flex:1;min-width:160px"><div style="font-weight:600">${a.nombre}</div>
+          <div style="font-size:12px;color:#888">${a.email} · ${s.testsRealizados||0} tests · ${pct}% · 📱 ${devN}/${MAX_DISPOSITIVOS}</div>
+          <div style="font-size:12px;margin-top:3px">Acceso: <span style="color:${cT?'#4ade80':'#f87171'}">📝 Test ${cT?'✅':'🚫'}</span> · <span style="color:${cC?'#4ade80':'#f87171'}">🗺️ Callejero ${cC?'✅':'🚫'}</span></div></div>
+          <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="toggleAccesoTest('${a.id}','${a.nombre}',${cT})">📝 ${cT?'Quitar':'Dar'} Test</button>
+          <button class="btn-sm" style="background:rgba(212,80,10,0.18);color:#ff7d33" onclick="toggleAccesoCallejero('${a.id}','${a.nombre}',${cC})">🗺️ ${cC?'Quitar':'Dar'} Callejero</button>
           <button class="btn-sm" style="background:rgba(212,80,10,0.15);color:#ff7d33" title="Borra los dispositivos registrados de este alumno y CIERRA su sesión en todos ellos. Úsalo si cambió de móvil o no puede entrar por el límite. Después podrá registrar hasta 2 dispositivos de nuevo. No afecta a sus tests ni a su progreso." onclick="resetDispositivos('${a.id}','${a.nombre}')">📱 Reset</button>
           <button class="btn-sm btn-danger" onclick="desactivarAlumno('${a.id}','${a.nombre}')">🚫 Desactivar</button></div></div>`;
       }).join('');
@@ -1123,6 +1183,39 @@ window.desactivarAlumno = async (uid, nombre) => {
   await updateDoc(doc(db,'alumnos',uid), { activado: false });
   mostrarToast('🚫 Alumno desactivado', nombre);
   cargarAdminAlumnos();
+};
+
+// ── Permisos de sección: Test y Callejero (independientes) ──
+window.toggleAccesoTest = async (uid, nombre, tieneAhora) => {
+  const nuevo = !tieneAhora;
+  if (!confirm(`${nuevo?'DAR':'QUITAR'} acceso a los TESTS a ${nombre}?`)) return;
+  await updateDoc(doc(db,'alumnos',uid), { acceso_test: nuevo });
+  mostrarToast(nuevo?'📝 Test activado':'📝 Test quitado', nombre);
+  cargarAdminAlumnos();
+};
+window.toggleAccesoCallejero = async (uid, nombre, tieneAhora) => {
+  const nuevo = !tieneAhora;
+  if (!confirm(`${nuevo?'DAR':'QUITAR'} acceso al CALLEJERO a ${nombre}?`)) return;
+  const campos = { acceso_callejero: nuevo };
+  if (nuevo) { campos.acceso_callejero_por = currentUser.email; campos.acceso_callejero_fecha = serverTimestamp(); }
+  await updateDoc(doc(db,'alumnos',uid), campos);
+  mostrarToast(nuevo?'🗺️ Callejero activado':'🗺️ Callejero quitado', nombre);
+  cargarAdminAlumnos();
+};
+// Acceso al Callejero en bloque para todos los alumnos activos.
+window.callejeroATodos = async (valor) => {
+  if (!confirm(`${valor?'DAR':'QUITAR'} acceso al Callejero a TODOS los alumnos activos?`)) return;
+  try {
+    const snap = await getDocs(collection(db,'alumnos'));
+    const activos = snap.docs.map(d=>({id:d.id,...d.data()})).filter(a=>!ADMIN_EMAILS.includes(a.email) && a.activado !== false);
+    await Promise.all(activos.map(a => {
+      const campos = { acceso_callejero: valor };
+      if (valor) { campos.acceso_callejero_por = currentUser.email; campos.acceso_callejero_fecha = serverTimestamp(); }
+      return updateDoc(doc(db,'alumnos',a.id), campos);
+    }));
+    mostrarToast(valor?'🗺️ Callejero dado a todos':'🚫 Callejero quitado a todos', `${activos.length} alumnos`);
+    cargarAdminAlumnos();
+  } catch(e) { alert('No se pudo aplicar a todos.'); }
 };
 
 // ─── PWA Install ────────────────────────────────────────────
@@ -1703,6 +1796,7 @@ body {
     <button class="tab-btn alumno-tab-btn" data-tab="revisar" onclick="showAlumnoTab('revisar')"><span class="ico">🚩</span><span>Revisar</span></button>
     <button class="tab-btn alumno-tab-btn" data-tab="progreso" onclick="showAlumnoTab('progreso')"><span class="ico">📊</span><span>Progreso</span></button>
     <button class="tab-btn alumno-tab-btn" data-tab="ranking" onclick="showAlumnoTab('ranking')"><span class="ico">🏆</span><span>Ranking</span></button>
+    <button class="tab-btn alumno-tab-btn" id="tab-btn-callejero" data-tab="callejero" onclick="showAlumnoTab('callejero')" style="display:none"><span class="ico">🗺️</span><span>Callejero</span></button>
   </div>
   <div class="content">
     <div class="tab-panel alumno-tab active" data-tab="inicio">
@@ -1797,6 +1891,9 @@ body {
       <h2 style="font-size:20px;font-weight:700;margin-bottom:6px">🏆 Ranking</h2>
       <p style="color:var(--text2);font-size:13px;margin-bottom:18px">Top alumnos por puntos. Ganas 10 puntos por acierto y +50 por simulacro.</p>
       <div id="ranking-lista"></div>
+    </div>
+    <div class="tab-panel alumno-tab" data-tab="callejero">
+      <div id="callejero-cont"></div>
     </div>
   </div>
 </div>
