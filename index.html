@@ -983,15 +983,162 @@ window.renderCallejero = () => {
       </div>`;
     return;
   }
-  // Con acceso (o admin): por ahora, cartel de obras.
-  c.innerHTML = `
-    <div style="max-width:520px;margin:40px auto;text-align:center;background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid rgba(212,80,10,0.25);border-radius:24px;padding:48px 32px;box-shadow:var(--shadow)">
-      <div style="font-size:64px;margin-bottom:18px">🚧🗺️</div>
-      <div style="font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--gold);letter-spacing:2px;margin-bottom:12px">CALLEJERO EN CONSTRUCCIÓN</div>
-      <p style="color:var(--text2);font-size:14px;line-height:1.7">Estamos montando el módulo del Callejero de Málaga: mapa, calles, barrios, puntos de interés, recorridos y exámenes.</p>
-      <p style="color:var(--text3);font-size:12px;line-height:1.7;margin-top:10px">${isAdmin?'👁️ Solo tú (admin) ves esto. Los alumnos aún no ven la pestaña.':'Muy pronto disponible.'}</p>
-    </div>`;
+  // Con acceso (o admin): la aplicación del Callejero. Se monta una sola vez.
+  if(!document.getElementById('cal-app')){
+    c.innerHTML = `
+      <style>
+        #cal-app{max-width:900px;margin:0 auto}
+        .cal-barra{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+        .cal-modos{display:flex;gap:8px;flex-wrap:wrap}
+        .cal-modo-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text2);border-radius:12px;padding:9px 15px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
+        .cal-modo-btn.active{background:linear-gradient(135deg,#D4500A,#b8440a);color:#fff;border-color:transparent}
+        .cal-admin-nota{font-size:12px;color:var(--text3)}
+        .cal-barra-info{font-size:13px;color:var(--text2);background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:10px}
+        #cal-map{width:100%;height:60vh;min-height:360px;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:#1a1f2e}
+        .cal-info{margin-top:12px}
+        .cal-ficha{background:linear-gradient(135deg,var(--card),var(--card2));border:1px solid var(--border);border-radius:14px;padding:14px 16px}
+        .cal-ficha-nom{font-size:18px;font-weight:800;color:var(--gold)}
+      </style>
+      <div id="cal-app">
+        <div class="cal-barra">
+          <div class="cal-modos">
+            <button class="cal-modo-btn active" data-m="estudiar" onclick="calSetModo('estudiar')">📖 Estudiar</button>
+            <button class="cal-modo-btn" data-m="localiza" onclick="calSetModo('localiza')">🎯 Localiza</button>
+          </div>
+          ${isAdmin?'<span class="cal-admin-nota">👁️ Vista admin · módulo en obras</span>':''}
+        </div>
+        <div id="cal-barra-info" class="cal-barra-info"></div>
+        <div id="cal-map"></div>
+        <div id="cal-info" class="cal-info"></div>
+      </div>`;
+  }
+  calInit();
 };
+
+// ══════════════ MAPA DEL CALLEJERO (Google Maps) ══════════════
+const CAL_MAPS_KEY='AIzaSyD4iLfl5RRP8BNpoIWplY5AyC-MsWZuD7w';
+const CAL_CENTRO={lat:36.7213,lng:-4.4214};
+const CAL_SINLAB=[{featureType:'all',elementType:'labels',stylers:[{visibility:'off'}]}];
+const CAL_PALETA=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7'];
+let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, _calVias=null, calCargando=false;
+
+function calCargarMaps(){
+  if(window.google&&window.google.maps) return Promise.resolve();
+  if(_calMapsP) return _calMapsP;
+  _calMapsP=new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src=`https://maps.googleapis.com/maps/api/js?key=${CAL_MAPS_KEY}&language=es&region=ES`;
+    s.async=true; s.onload=()=>res(); s.onerror=()=>rej(new Error('maps'));
+    document.head.appendChild(s);
+  });
+  return _calMapsP;
+}
+
+async function calInit(){
+  const cont=$('cal-map'); if(!cont) return;
+  try{ await calCargarMaps(); }
+  catch(e){ cont.innerHTML='<div style="padding:30px;text-align:center;color:#cbd5e1">No se pudo cargar el mapa de Google. Revisa la conexión.</div>'; return; }
+  if(!calMap){
+    calMap=new google.maps.Map(cont,{
+      center:CAL_CENTRO, zoom:13, clickableIcons:false,
+      mapTypeControl:true, streetViewControl:false, fullscreenControl:true, rotateControl:false,
+      styles:CAL_SINLAB,
+      mapTypeControlOptions:{mapTypeIds:['roadmap','satellite']}
+    });
+    calMap.data.setStyle(calEstiloVia);
+    calMap.data.addListener('click', calClick);
+    await calCargarCalles();
+    await calCargarColoresAlumno();
+  }
+  calSetModo(calModo);
+}
+
+async function calCargarCalles(){
+  if(calCargando) return; calCargando=true;
+  try{ const r=await fetch('callejero/data/cal_mapa.geojson'); const gj=await r.json(); calMap.data.addGeoJson(gj); }
+  catch(e){ console.warn('calles callejero', e); }
+  calCargando=false;
+}
+
+function calEstiloVia(feature){
+  const cod=feature.getProperty('cod');
+  if(calSel===cod) return {strokeColor:'#ffffff', strokeWeight:5, strokeOpacity:1, zIndex:20};
+  const col=calColores[cod];
+  if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10};
+  return {strokeColor:'#ff7d33', strokeWeight:2, strokeOpacity:0.5, zIndex:1};
+}
+
+window.calSetModo=(m)=>{
+  calModo=m; calSel=null;
+  document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
+  if(calMap) calMap.data.setStyle(calEstiloVia);
+  const info=$('cal-info'), barra=$('cal-barra-info');
+  if(m==='estudiar'){ barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; info.innerHTML=''; }
+  else{ calAciertos=0; calFallos=0; barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
+};
+
+function calClick(ev){
+  const f=ev.feature; const cod=f.getProperty('cod'); const nom=f.getProperty('n');
+  if(calModo==='estudiar'){ calSel=cod; calMap.data.setStyle(calEstiloVia); calInfoEstudiar(cod, nom); }
+  else{ calComprobarLocaliza(cod, nom); }
+}
+
+function calInfoEstudiar(cod, nom){
+  const chips=CAL_PALETA.map(c=>`<button onclick="calPonColor(${cod},'${c}')" style="width:30px;height:30px;border-radius:50%;border:2px solid #fff;background:${c};cursor:pointer" title="Poner este color"></button>`).join('');
+  $('cal-info').innerHTML=`
+    <div class="cal-ficha">
+      <div class="cal-ficha-nom">${nom}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <span style="font-size:13px;color:var(--text2)">Color:</span>${chips}
+        <button onclick="calPonColor(${cod},null)" class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1">Quitar</button>
+      </div>
+    </div>`;
+}
+
+window.calPonColor=(cod,color)=>{
+  if(color) calColores[cod]=color; else delete calColores[cod];
+  calMap.data.setStyle(calEstiloVia);
+  if(!modoVistaPrevia && currentUser){
+    const ref=doc(db,'alumnos',currentUser.uid,'cal_vias',String(cod));
+    if(color) setDoc(ref,{color}).catch(()=>{}); else deleteDoc(ref).catch(()=>{});
+  }
+};
+
+async function calCargarColoresAlumno(){
+  if(modoVistaPrevia||!currentUser) return;
+  try{ const s=await getDocs(collection(db,'alumnos',currentUser.uid,'cal_vias'));
+    s.docs.forEach(d=>{ calColores[Number(d.id)]=d.data().color; });
+    calMap.data.setStyle(calEstiloVia);
+  }catch(e){}
+}
+
+function calListaVias(){
+  if(_calVias) return _calVias;
+  _calVias=[]; calMap.data.forEach(f=>{ _calVias.push({cod:f.getProperty('cod'), n:f.getProperty('n')}); });
+  return _calVias;
+}
+function calNuevaLocaliza(){
+  const vs=calListaVias(); if(!vs.length){ $('cal-info').innerHTML=''; return; }
+  calObjetivo=vs[Math.floor(Math.random()*vs.length)];
+  calSel=null; calMap.data.setStyle(calEstiloVia);
+  $('cal-info').innerHTML=`
+    <div class="cal-ficha">
+      <div style="font-size:13px;color:var(--text2)">Localiza en el mapa:</div>
+      <div class="cal-ficha-nom">${calObjetivo.n}</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div>
+    </div>`;
+}
+window.calNuevaLocaliza=calNuevaLocaliza;
+function calComprobarLocaliza(cod,nom){
+  if(!calObjetivo) return;
+  if(cod===calObjetivo.cod){
+    calAciertos++; calSel=cod; calMap.data.setStyle(calEstiloVia);
+    $('cal-info').innerHTML=`<div class="cal-ficha" style="border-color:rgba(34,197,94,0.5)"><div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${nom}</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Siguiente →</button></div>`;
+  }else{
+    calFallos++;
+    $('cal-info').innerHTML=`<div class="cal-ficha" style="border-color:rgba(248,113,113,0.5)"><div style="color:#f87171;font-weight:800">❌ Esa es ${nom}</div><div style="font-size:13px;color:var(--text2);margin-top:4px">Buscabas: <b>${calObjetivo.n}</b></div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Otra →</button></div>`;
+  }
+}
 
 async function cargarAdmin() {
   $('admin-email').textContent = currentUser.email;
