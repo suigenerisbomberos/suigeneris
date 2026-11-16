@@ -1046,18 +1046,55 @@ async function calInit(){
       mapTypeControlOptions:{mapTypeIds:['roadmap','satellite']}
     });
     calMap.data.setStyle(calEstiloVia);
-    calMap.data.addListener('click', calClick);
+    calMap.addListener('click', calClickMapa);
     await calCargarCalles();
     await calCargarColoresAlumno();
   }
   calSetModo(calModo);
 }
 
+const CAL_KX=111320*Math.cos(36.72*Math.PI/180), CAL_KY=110574;
+let calRaw=[]; // [{cod,n,segs:[[x1,y1,x2,y2]...]}] en metros, para buscar la calle más cercana al toque
 async function calCargarCalles(){
   if(calCargando) return; calCargando=true;
-  try{ const r=await fetch('callejero/data/cal_mapa.geojson'); const gj=await r.json(); calMap.data.addGeoJson(gj); }
+  try{
+    const r=await fetch('callejero/data/cal_mapa.geojson'); const gj=await r.json();
+    calMap.data.addGeoJson(gj);
+    calRaw=[];
+    for(const f of gj.features){
+      const cod=f.properties.cod, n=f.properties.n, segs=[];
+      for(const linea of f.geometry.coordinates){
+        for(let i=0;i<linea.length-1;i++){
+          const a=linea[i], b=linea[i+1];
+          segs.push([a[0]*CAL_KX, a[1]*CAL_KY, b[0]*CAL_KX, b[1]*CAL_KY]);
+        }
+      }
+      calRaw.push({cod,n,segs});
+    }
+  }
   catch(e){ console.warn('calles callejero', e); }
   calCargando=false;
+}
+
+// Distancia (m) de un punto a un segmento
+function _distSeg(px,py,s){
+  const x1=s[0],y1=s[1],x2=s[2],y2=s[3];
+  const dx=x2-x1, dy=y2-y1; const L2=dx*dx+dy*dy;
+  let t = L2>0 ? ((px-x1)*dx+(py-y1)*dy)/L2 : 0;
+  t=Math.max(0,Math.min(1,t));
+  const cx=x1+t*dx, cy=y1+t*dy;
+  return Math.hypot(px-cx, py-cy);
+}
+// Calle más cercana al punto tocado
+function calCercana(latLng){
+  const px=latLng.lng()*CAL_KX, py=latLng.lat()*CAL_KY;
+  let best=null, bd=Infinity;
+  for(const v of calRaw){ for(const s of v.segs){ const d=_distSeg(px,py,s); if(d<bd){bd=d; best=v;} } }
+  return {v:best, d:bd};
+}
+function calTolerancia(latLng){
+  const mpp=156543.03392*Math.cos(latLng.lat()*Math.PI/180)/Math.pow(2, calMap.getZoom());
+  return Math.max(18, 16*mpp); // ~16 px de margen, mínimo 18 m
 }
 
 function calEstiloVia(feature){
@@ -1077,10 +1114,15 @@ window.calSetModo=(m)=>{
   else{ calAciertos=0; calFallos=0; barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
 };
 
-function calClick(ev){
-  const f=ev.feature; const cod=f.getProperty('cod'); const nom=f.getProperty('n');
-  if(calModo==='estudiar'){ calSel=cod; calMap.data.setStyle(calEstiloVia); calInfoEstudiar(cod, nom); }
-  else{ calComprobarLocaliza(cod, nom); }
+function calClickMapa(ev){
+  if(!calRaw.length) return;
+  const {v,d}=calCercana(ev.latLng);
+  if(!v || d>calTolerancia(ev.latLng)){
+    if(calModo==='estudiar'){ $('cal-info').innerHTML='<div class="cal-ficha" style="color:var(--text3);font-size:13px">Toca más cerca de una calle…</div>'; }
+    return;
+  }
+  if(calModo==='estudiar'){ calSel=v.cod; calMap.data.setStyle(calEstiloVia); calInfoEstudiar(v.cod, v.n); }
+  else{ calComprobarLocaliza(v.cod, v.n); }
 }
 
 function calInfoEstudiar(cod, nom){
