@@ -1005,8 +1005,11 @@ window.renderCallejero = () => {
           <div class="cal-modos">
             <button class="cal-modo-btn active" data-m="estudiar" onclick="calSetModo('estudiar')">📖 Estudiar</button>
             <button class="cal-modo-btn" data-m="localiza" onclick="calSetModo('localiza')">🎯 Localiza</button>
+            <button class="cal-modo-btn" data-m="quevia" onclick="calSetModo('quevia')">❓ ¿Qué vía es?</button>
           </div>
           <select id="cal-distrito" class="cal-sel" onchange="calSetDistrito(this.value)"><option value="">🏙️ Toda Málaga</option></select>
+          <input id="cal-buscar" class="cal-sel" placeholder="🔎 Buscar calle…" oninput="calBuscar(this.value)" style="min-width:150px">
+          <button class="cal-modo-btn" onclick="calIrTodaMalaga()" title="Ver toda Málaga">🗺️</button>
           ${isAdmin?'<span class="cal-admin-nota">👁️ Vista admin · módulo en obras</span>':''}
         </div>
         <div id="cal-barra-info" class="cal-barra-info"></div>
@@ -1073,13 +1076,15 @@ async function calCargarCalles(){
     calRaw=[];
     for(const f of gj.features){
       const cod=f.properties.cod, n=f.properties.n, segs=[];
+      let s=90,w=180,no=-90,e=-180;
       for(const linea of f.geometry.coordinates){
-        for(let i=0;i<linea.length-1;i++){
-          const a=linea[i], b=linea[i+1];
-          segs.push([a[0]*CAL_KX, a[1]*CAL_KY, b[0]*CAL_KX, b[1]*CAL_KY]);
+        for(let i=0;i<linea.length;i++){
+          const p=linea[i];
+          if(p[1]<s)s=p[1]; if(p[1]>no)no=p[1]; if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0];
+          if(i<linea.length-1){ const b=linea[i+1]; segs.push([p[0]*CAL_KX,p[1]*CAL_KY,b[0]*CAL_KX,b[1]*CAL_KY]); }
         }
       }
-      calRaw.push({cod,n,d:f.properties.d,segs});
+      calRaw.push({cod,n,d:f.properties.d,segs,bbox:[s,w,no,e]});
     }
   }
   catch(e){ console.warn('calles callejero', e); }
@@ -1124,7 +1129,8 @@ window.calSetModo=(m)=>{
   if(calMap) calMap.data.setStyle(calEstiloVia);
   const barra=$('cal-barra-info'); calSetInfo('');
   if(m==='estudiar'){ if(barra) barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; }
-  else{ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
+  else if(m==='localiza'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
+  else if(m==='quevia'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='❓ <b>¿Qué vía es?</b>: resalto una calle en blanco y eliges entre 4.'; calQueVia(); }
 };
 
 // Clic directo sobre una calle (feature de Google)
@@ -1141,11 +1147,53 @@ function calClickMapa(ev){
   }
   calElegir(v.cod, v.n);
 }
-// Acción común según el modo
+// Acción común según el modo (en "quevia" no se actúa al tocar el mapa)
 function calElegir(cod, nom){
   if(calModo==='estudiar'){ calSel=cod; calMap.data.setStyle(calEstiloVia); calInfoEstudiar(cod, nom); }
-  else{ calComprobarLocaliza(cod, nom); }
+  else if(calModo==='localiza'){ calComprobarLocaliza(cod, nom); }
 }
+
+// Centrar el mapa en una vía (o toda Málaga)
+function calIrBBox(b){ if(b) calMap.fitBounds({south:b[0], west:b[1], north:b[2], east:b[3]}); }
+window.calIrTodaMalaga=()=>{ calMap.setCenter(CAL_CENTRO); calMap.setZoom(13); };
+
+// Buscador de calle (acento-insensible, usa _norm del admin)
+window.calBuscar=(q)=>{
+  q=_norm((q||'').trim());
+  if(q.length<2){ calSetInfo(''); return; }
+  const res=calRaw.filter(v=>_norm(v.n).includes(q)).slice(0,8);
+  if(!res.length){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Sin resultados…</div>'); return; }
+  const items=res.map(v=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:3px 0;background:rgba(255,255,255,0.06);color:#f1f5f9" onclick="calIrACalle(${v.cod})">${v.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:12px;color:var(--text2);margin-bottom:4px">Resultados:</div>${items}</div>`);
+};
+window.calIrACalle=(cod)=>{
+  const v=calRaw.find(x=>x.cod===cod); if(!v) return;
+  calModo='estudiar'; document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m==='estudiar'));
+  calSel=cod; calMap.data.setStyle(calEstiloVia); calIrBBox(v.bbox); calInfoEstudiar(cod, v.n);
+  const inp=$('cal-buscar'); if(inp) inp.value='';
+};
+
+// Modo "¿Qué vía es?": resalta una calle y 4 opciones
+function _baraja(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function calQueVia(){
+  const vs=calListaVias();
+  if(vs.length<4){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Necesito más calles (elige otro distrito).</div>'); return; }
+  calObjetivo=vs[Math.floor(Math.random()*vs.length)];
+  calSel=calObjetivo.cod; calMap.data.setStyle(calEstiloVia); calIrBBox(calObjetivo.bbox);
+  const otras=_baraja(vs.filter(v=>v.cod!==calObjetivo.cod)).slice(0,3);
+  const ops=_baraja([calObjetivo, ...otras]);
+  const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespQueVia(${o.cod})">${o.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué vía es la resaltada en blanco?</div>${bot}<div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div></div>`);
+}
+window.calRespQueVia=(cod)=>{
+  if(!calObjetivo) return;
+  const bien = cod===calObjetivo.cod;
+  if(bien) calAciertos++; else calFallos++;
+  const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
+  const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto!</div>` : `<div style="color:#f87171;font-weight:800">❌ Era: <b>${calObjetivo.n}</b></div>`;
+  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}<button class="btn-sm btn-primary" style="margin-top:10px" onclick="calQueVia()">Siguiente →</button></div>`);
+};
+window.calQueVia=calQueVia;
 
 function calInfoEstudiar(cod, nom){
   const chips=CAL_PALETA.map(c=>`<button onclick="calPonColor(${cod},'${c}')" style="width:30px;height:30px;border-radius:50%;border:2px solid #fff;background:${c};cursor:pointer" title="Poner este color"></button>`).join('');
