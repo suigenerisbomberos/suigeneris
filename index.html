@@ -1046,7 +1046,8 @@ async function calInit(){
       mapTypeControlOptions:{mapTypeIds:['roadmap','satellite']}
     });
     calMap.data.setStyle(calEstiloVia);
-    calMap.addListener('click', calClickMapa);
+    calMap.data.addListener('click', calClickFeature); // clic justo sobre la calle
+    calMap.addListener('click', calClickMapa);         // clic cerca de la calle
     await calCargarCalles();
     await calCargarColoresAlumno();
   }
@@ -1102,7 +1103,7 @@ function calEstiloVia(feature){
   if(calSel===cod) return {strokeColor:'#ffffff', strokeWeight:5, strokeOpacity:1, zIndex:20};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10};
-  return {strokeColor:'#ff7d33', strokeWeight:2, strokeOpacity:0.5, zIndex:1};
+  return {strokeColor:'#ff7d33', strokeWeight:3, strokeOpacity:0.75, zIndex:1};
 }
 
 window.calSetModo=(m)=>{
@@ -1114,6 +1115,11 @@ window.calSetModo=(m)=>{
   else{ calAciertos=0; calFallos=0; barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
 };
 
+// Clic directo sobre una calle (feature de Google)
+function calClickFeature(ev){
+  const f=ev.feature; calElegir(f.getProperty('cod'), f.getProperty('n'));
+}
+// Clic en el mapa cerca de una calle: busca la más cercana dentro de tolerancia
 function calClickMapa(ev){
   if(!calRaw.length) return;
   const {v,d}=calCercana(ev.latLng);
@@ -1121,8 +1127,12 @@ function calClickMapa(ev){
     if(calModo==='estudiar'){ $('cal-info').innerHTML='<div class="cal-ficha" style="color:var(--text3);font-size:13px">Toca más cerca de una calle…</div>'; }
     return;
   }
-  if(calModo==='estudiar'){ calSel=v.cod; calMap.data.setStyle(calEstiloVia); calInfoEstudiar(v.cod, v.n); }
-  else{ calComprobarLocaliza(v.cod, v.n); }
+  calElegir(v.cod, v.n);
+}
+// Acción común según el modo
+function calElegir(cod, nom){
+  if(calModo==='estudiar'){ calSel=cod; calMap.data.setStyle(calEstiloVia); calInfoEstudiar(cod, nom); }
+  else{ calComprobarLocaliza(cod, nom); }
 }
 
 function calInfoEstudiar(cod, nom){
