@@ -1203,6 +1203,8 @@ function calEstiloVia(feature){
   // Si hay un distrito elegido, las demás calles se apagan para que destaque
   if(calDistrito && feature.getProperty('d')!==calDistrito)
     return {strokeColor:'#64748b', strokeWeight:1, strokeOpacity:0.12, zIndex:0};
+  // Con "Ver calles" activo, las líneas se hacen tenues para que destaquen los nombres
+  if(calNombres) return {strokeColor:'#ff7d33', strokeWeight:2, strokeOpacity:0.2, zIndex:1};
   return {strokeColor:'#ff7d33', strokeWeight:3, strokeOpacity:0.75, zIndex:1};
 }
 
@@ -1262,37 +1264,41 @@ window.calToggleNombres=()=>{
   calNombres=!calNombres;
   const b=$('cal-nombres-btn');
   if(b){ b.textContent = calNombres ? '🔤 Ver calles ✓' : '🔤 Ver calles'; b.classList.toggle('active', calNombres); }
+  if(calMap) calMap.data.setStyle(calEstiloVia);
   calRefrescarNombres();
 };
 // Puntos de etiqueta (ancla + ángulo) a lo largo de una vía. En calles largas
 // el nombre se repite cada ~350 m para que no se pierda.
 function _calLabelPuntos(cod){
   const f=calFeatIndex[cod]; if(!f) return [];
-  const STEP=350, RAD=Math.PI/180, puntos=[];
+  const STEP=350, VENT=40, RAD=Math.PI/180, out=[];
   for(const line of f.geometry.coordinates){
     if(line.length<2) continue;
-    let acc=0, nextAt=STEP*0.5;
+    // distancias acumuladas (metros) a lo largo de la línea
+    const cum=[0];
     for(let i=0;i<line.length-1;i++){
       const a=line[i], b=line[i+1];
       const latm=(a[1]+b[1])/2;
       const dxm=(b[0]-a[0])*111320*Math.cos(latm*RAD), dym=(b[1]-a[1])*111320;
-      const segLen=Math.hypot(dxm,dym);
-      let ang=Math.atan2(-dym,dxm)*180/Math.PI; if(ang>90)ang-=180; if(ang<-90)ang+=180;
-      while(segLen>0 && nextAt<=acc+segLen){
-        const t=(nextAt-acc)/segLen;
-        puntos.push({lat:a[1]+(b[1]-a[1])*t, lng:a[0]+(b[0]-a[0])*t, ang});
-        nextAt+=STEP;
-      }
-      acc+=segLen;
+      cum.push(cum[i]+Math.hypot(dxm,dym));
     }
-    if(!puntos.length){ // calle cortísima: un punto en el medio
-      const a=line[0], b=line[line.length-1];
-      let ang=Math.atan2(-(b[1]-a[1]),(b[0]-a[0])*Math.cos(a[1]*RAD))*180/Math.PI;
-      if(ang>90)ang-=180; if(ang<-90)ang+=180;
-      puntos.push({lat:(a[1]+b[1])/2, lng:(a[0]+b[0])/2, ang});
+    const L=cum[cum.length-1]; if(L<=0) continue;
+    const pointAt=(s)=>{
+      s=Math.max(0,Math.min(L,s));
+      let i=0; while(i<cum.length-2 && cum[i+1]<s) i++;
+      const seg=(cum[i+1]-cum[i])||1, t=(s-cum[i])/seg;
+      return [line[i][0]+(line[i+1][0]-line[i][0])*t, line[i][1]+(line[i+1][1]-line[i][1])*t];
+    };
+    const n=Math.max(1, Math.round(L/STEP)); // una etiqueta cada ~350 m
+    for(let k=0;k<n;k++){
+      const s=(L/n)*(k+0.5);
+      const p=pointAt(s), p1=pointAt(s-VENT), p2=pointAt(s+VENT);
+      const dxm=(p2[0]-p1[0])*Math.cos(p[1]*RAD), dym=(p2[1]-p1[1]);
+      let ang=Math.atan2(-dym,dxm)*180/Math.PI; if(ang>90)ang-=180; if(ang<-90)ang+=180;
+      out.push({lat:p[1], lng:p[0], ang});
     }
   }
-  return puntos;
+  return out;
 }
 // Capa propia que dibuja los nombres girados a lo largo de cada calle
 function calCrearOverlayNombres(){
@@ -1313,7 +1319,7 @@ function calCrearOverlayNombres(){
       s.textContent=L.text;
       s.style.cssText='position:absolute;left:'+p.x+'px;top:'+p.y+'px;white-space:nowrap;'
         +'transform:translate(-50%,-50%) rotate('+L.ang+'deg);'
-        +"font:700 11px 'Outfit',sans-serif;color:#0b1b36;"
+        +"font:800 13px 'Outfit',sans-serif;color:#0b1b36;"
         +'text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff;';
       this._div.appendChild(s);
     }
@@ -1328,17 +1334,24 @@ function calRefrescarNombres(){
   const bnd=calMap.getBounds(); if(!bnd) return;
   const ne=bnd.getNorthEast(), sw=bnd.getSouthWest();
   const N=ne.lat(), E=ne.lng(), S=sw.lat(), W=sw.lng();
-  const labels=[]; let n=0;
+  const labels=[], placed=[]; let n=0; const RAD=Math.PI/180, MINSEP=75;
   for(const cod of calEnMapa){
     const nombre=calViaNombre[cod]; if(!nombre) continue;
     const bb=calBBoxIndex[cod]; if(!bb) continue;
     if(bb[0]>N||bb[2]<S||bb[1]>E||bb[3]<W) continue; // la calle no se ve
     for(const pt of _calLabelPuntos(cod)){
       if(pt.lat<S||pt.lat>N||pt.lng<W||pt.lng>E) continue; // ese trozo no se ve
+      let choca=false;
+      for(const q of placed){
+        const dxm=(pt.lng-q.lng)*111320*Math.cos(pt.lat*RAD), dym=(pt.lat-q.lat)*111320;
+        if(dxm*dxm+dym*dym < MINSEP*MINSEP){ choca=true; break; }
+      }
+      if(choca) continue; // demasiado cerca de otro nombre: lo saltamos
+      placed.push(pt);
       labels.push({lat:pt.lat, lng:pt.lng, ang:pt.ang, text:nombre});
-      if(++n>=160) break;
+      if(++n>=200) break;
     }
-    if(n>=160) break;
+    if(n>=200) break;
   }
   calLabelOverlay._labels=labels;
   if(calLabelOverlay.draw) calLabelOverlay.draw();
