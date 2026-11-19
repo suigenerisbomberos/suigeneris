@@ -360,6 +360,7 @@ window.activarVistaPrevia = async () => {
   await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
   renderInicio(); renderTemas(); renderProgreso();
   actualizarVisibilidadCallejero();
+  if(puedeVerCallejero()) calPrefetchCallejero();
   showAlumnoTab('inicio');
   mostrarToast('👁️ Modo Vista Previa', 'Estás viendo la plataforma como un alumno');
 };
@@ -400,6 +401,7 @@ async function cargarAlumno() {
   }
   renderInicio(); renderTemas(); renderProgreso();
   actualizarVisibilidadCallejero();
+  if(puedeVerCallejero()) calPrefetchCallejero();
   showAlumnoTab('inicio');
 }
 
@@ -1019,7 +1021,7 @@ window.renderCallejero = () => {
         </div>
         <div id="cal-barra-info" class="cal-barra-info"></div>
         <div class="cal-layout">
-          <div id="cal-map"></div>
+          <div id="cal-map"><div style="display:flex;align-items:center;justify-content:center;height:100%;color:#94a3b8;font-size:14px;font-family:'Outfit',sans-serif">🗺️ Cargando mapa de Málaga…</div></div>
           <div id="cal-info-ext" class="cal-info-ext"></div>
         </div>
       </div>`;
@@ -1088,29 +1090,42 @@ async function calInit(){
 }
 
 const CAL_KX=111320*Math.cos(36.72*Math.PI/180), CAL_KY=110574;
-let calRaw=[]; // [{cod,n,segs:[[x1,y1,x2,y2]...]}] en metros, para buscar la calle más cercana al toque
+let calRaw=[]; // [{cod,n,d,segs,bbox}] para buscar la calle más cercana al toque
+let calMapaGJ=null; // geojson cacheado (se precarga en segundo plano)
+async function calPrefetchGeojson(){
+  if(!calMapaGJ){ try{ const r=await fetch('callejero/data/cal_mapa.geojson'); calMapaGJ=await r.json(); }catch(e){} }
+  return calMapaGJ;
+}
+// Precarga en segundo plano (mapa de Google + datos) para abrir el Callejero al instante
+function calPrefetchCallejero(){ calCargarMaps().catch(()=>{}); calPrefetchGeojson().catch(()=>{}); }
+
 async function calCargarCalles(){
   if(calCargando) return; calCargando=true;
   try{
-    const r=await fetch('callejero/data/cal_mapa.geojson'); const gj=await r.json();
-    calRaw=[]; const principales=[], resto=[];
-    for(const f of gj.features){
-      const cod=f.properties.cod, n=f.properties.n, segs=[];
-      let s=90,w=180,no=-90,e=-180;
-      for(const linea of f.geometry.coordinates){
-        for(let i=0;i<linea.length;i++){
-          const p=linea[i];
-          if(p[1]<s)s=p[1]; if(p[1]>no)no=p[1]; if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0];
-          if(i<linea.length-1){ const b=linea[i+1]; segs.push([p[0]*CAL_KX,p[1]*CAL_KY,b[0]*CAL_KX,b[1]*CAL_KY]); }
-        }
-      }
-      calRaw.push({cod,n,d:f.properties.d,segs,bbox:[s,w,no,e]});
-      calViaNombre[cod]=n;
-      (f.properties.p===1 ? principales : resto).push(f);
-    }
-    // Primero las principales (el mapa aparece rápido); el resto, en segundo plano.
+    const gj = await calPrefetchGeojson();
+    if(!gj){ calCargando=false; return; }
+    const principales=[], resto=[];
+    for(const f of gj.features){ (f.properties.p===1 ? principales : resto).push(f); }
+    // Dibuja ya las principales (el mapa aparece rápido)
     calMap.data.addGeoJson({type:'FeatureCollection', features:principales});
-    setTimeout(()=>{ try{ calMap.data.addGeoJson({type:'FeatureCollection', features:resto}); calMap.data.setStyle(calEstiloVia); }catch(e){} }, 400);
+    // El índice de toque/búsqueda y el resto de calles, sin bloquear el primer dibujado
+    setTimeout(()=>{
+      calRaw=[];
+      for(const f of gj.features){
+        const cod=f.properties.cod, n=f.properties.n, segs=[];
+        let s=90,w=180,no=-90,e=-180;
+        for(const linea of f.geometry.coordinates){
+          for(let i=0;i<linea.length;i++){
+            const p=linea[i];
+            if(p[1]<s)s=p[1]; if(p[1]>no)no=p[1]; if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0];
+            if(i<linea.length-1){ const b=linea[i+1]; segs.push([p[0]*CAL_KX,p[1]*CAL_KY,b[0]*CAL_KX,b[1]*CAL_KY]); }
+          }
+        }
+        calRaw.push({cod,n,d:f.properties.d,segs,bbox:[s,w,no,e]});
+        calViaNombre[cod]=n;
+      }
+      try{ calMap.data.addGeoJson({type:'FeatureCollection', features:resto}); calMap.data.setStyle(calEstiloVia); }catch(e){}
+    }, 60);
   }
   catch(e){ console.warn('calles callejero', e); }
   calCargando=false;
