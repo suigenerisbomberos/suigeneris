@@ -1028,6 +1028,7 @@ const CAL_PALETA=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7'];
 let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, calCargando=false;
 let calDistrito=null, calDistritos=[], calInfoBox=null;
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
+let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){ if(calInfoBox) calInfoBox.innerHTML = html || ''; }
 
@@ -1087,6 +1088,7 @@ async function calCargarCalles(){
         }
       }
       calRaw.push({cod,n,d:f.properties.d,segs,bbox:[s,w,no,e]});
+      calViaNombre[cod]=n;
     }
   }
   catch(e){ console.warn('calles callejero', e); }
@@ -1116,9 +1118,9 @@ function calTolerancia(latLng){
 
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
+  if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20};
   // En modo Barrios las calles se atenúan para que destaquen las zonas
   if(calModo==='barrios') return {strokeColor:'#ff7d33', strokeWeight:1, strokeOpacity:0.22, zIndex:1};
-  if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20};
   // Si hay un distrito elegido, las demás calles se apagan para que destaque
   if(calDistrito && feature.getProperty('d')!==calDistrito)
     return {strokeColor:'#64748b', strokeWeight:1, strokeOpacity:0.12, zIndex:0};
@@ -1132,7 +1134,7 @@ window.calSetModo=async (m)=>{
   document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
   if(calMap) calMap.data.setStyle(calEstiloVia);
   // Capa de barrios: visible solo en modo Barrios
-  if(m==='barrios'){ await calCargarBarrios(); if(calBarriosLayer) calBarriosLayer.setMap(calMap); }
+  if(m==='barrios'){ await calCargarBarrios(); await calCargarViaBarrio(); if(calBarriosLayer) calBarriosLayer.setMap(calMap); }
   else if(calBarriosLayer){ calBarriosLayer.setMap(null); }
   const barra=$('cal-barra-info'); calSetInfo('');
   if(m==='estudiar'){ if(barra) barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; }
@@ -1140,8 +1142,8 @@ window.calSetModo=async (m)=>{
   else if(m==='quevia'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='❓ <b>¿Qué vía es?</b>: resalto una calle en cian y eliges entre 4.'; calQueVia(); }
   else if(m==='barrios'){ calAciertos=0; calFallos=0; calBarrioSel=null; calBarrioObj=null; calBarrioQuiz=false;
     if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
-    if(barra) barra.innerHTML='🏘️ <b>Barrios</b>: toca un barrio para ver su nombre, o pulsa "Pregúntame".';
-    calSetInfo('<div class="cal-ficha"><div style="font-size:13px;color:var(--text2)">Toca un barrio en el mapa…</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calBarrioPregunta()">❓ Pregúntame un barrio</button></div>');
+    if(barra) barra.innerHTML='🏘️ <b>Barrios</b>: toca un barrio para ver su nombre, o elige una actividad.';
+    calBarriosMenu();
   }
 };
 
@@ -1219,6 +1221,7 @@ async function calCargarBarrios(){
     const r=await fetch('callejero/data/cal_barrios.geojson'); const gj=await r.json();
     calBarriosLayer.addGeoJson(gj);
     calBarrios=gj.features.map(f=>({num:f.properties.num, n:f.properties.n, d:f.properties.d}));
+    calBarrioNombre={}; calBarrios.forEach(b=>{ calBarrioNombre[b.num]=b.n; });
     calBarriosLayer.setStyle(calBarrioStyle);
     calBarriosLayer.addListener('click', calClickBarrio);
     calBarriosCargado=true;
@@ -1262,7 +1265,99 @@ window.calBarrioResp=(num)=>{
   if(bien) calAciertos++; else calFallos++;
   const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
   const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calBarrioObj.n}</div>` : `<div style="color:#f87171;font-weight:800">❌ Era: <b>${calBarrioObj.n}</b></div>`;
-  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}<button class="btn-sm btn-primary" style="margin-top:10px" onclick="calBarrioPregunta()">Siguiente →</button></div>`);
+  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calBarrioPie('calBarrioPregunta')}</div>`);
+};
+
+// Menú de actividades de Barrios
+function calBarriosMenu(){
+  calBarrioQuiz=false; calBarrioObj=null; calBarrioSel=null; calSel=null;
+  if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
+  if(calMap) calMap.data.setStyle(calEstiloVia);
+  const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
+  calSetInfo(`<div class="cal-ficha">
+    <div style="font-size:13px;color:var(--text2);margin-bottom:6px">Toca un barrio para ver su nombre, o elige:</div>
+    ${b('calBarrioPregunta','❓ ¿Qué barrio es el resaltado?')}
+    ${b('calBarrioDeCalle','📍 ¿En qué barrio está una calle?')}
+    ${b('calCallesDeBarrio','🛣️ ¿Qué calle está en un barrio?')}
+  </div>`);
+}
+window.calBarriosMenu=calBarriosMenu;
+// Pie común: marcador + Siguiente + Menú
+function _calBarrioPie(fnSiguiente){
+  return `<div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+    <button class="btn-sm btn-primary" onclick="${fnSiguiente}()">Siguiente →</button>
+    <button class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="calBarriosMenu()">⬅︎ Menú</button>
+    <span style="font-size:12px;color:var(--text3);margin-left:auto">✅ ${calAciertos} · ❌ ${calFallos}</span></div>`;
+}
+
+async function calCargarViaBarrio(){
+  if(calViaBarrio) return;
+  try{
+    const r=await fetch('callejero/data/cal_via_barrio.json'); const raw=await r.json();
+    calViaBarrio={}; calBarrioVias={};
+    for(const k in raw){
+      const cod=Number(k); const nums=raw[k].map(x=>x.num);
+      calViaBarrio[cod]=nums;
+      for(const num of nums){ (calBarrioVias[num]||(calBarrioVias[num]=[])).push(cod); }
+    }
+  }catch(e){ console.warn('via_barrio callejero', e); calViaBarrio={}; calBarrioVias={}; }
+}
+
+// ¿En qué barrio está una calle?
+window.calBarrioDeCalle=async ()=>{
+  await calCargarViaBarrio();
+  const vs=calListaVias().filter(v=>calViaBarrio[v.cod] && calViaBarrio[v.cod].length);
+  if(vs.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí.</div>'); return; }
+  const via=vs[Math.floor(Math.random()*vs.length)];
+  calBarrioObj=null; calBarrioSel=null; calSel=via.cod;
+  if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
+  calMap.data.setStyle(calEstiloVia); calIrBBox(via.bbox);
+  const suyos=new Set(calViaBarrio[via.cod]); calBarrioRespSet=suyos;
+  let pool=calListaBarrios().filter(b=>!suyos.has(b.num));
+  if(pool.length<3) pool=calBarrios.filter(b=>!suyos.has(b.num));
+  const otras=_baraja(pool).slice(0,3);
+  const correctoNum=calViaBarrio[via.cod][0];
+  const correcto={num:correctoNum, n:(calBarrioNombre[correctoNum]||'?')};
+  const ops=_baraja([correcto, ...otras]);
+  const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespBarrioDeCalle(${o.num})">${o.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿En qué barrio está <b style="color:#00e5ff">${via.n}</b>? (resaltada en el mapa)</div>${bot}${_calBarrioPie('calBarrioDeCalle')}</div>`);
+};
+window.calRespBarrioDeCalle=(num)=>{
+  if(!calBarrioRespSet) return;
+  const bien=calBarrioRespSet.has(num);
+  if(bien) calAciertos++; else calFallos++;
+  const nombres=[...calBarrioRespSet].map(n=>calBarrioNombre[n]||'?').join(', ');
+  const col=bien?'rgba(34,197,94,0.5)':'rgba(248,113,113,0.5)';
+  const msg=bien?`<div style="color:#22c55e;font-weight:800">✅ ¡Correcto!</div>`:`<div style="color:#f87171;font-weight:800">❌ Pasa por: <b>${nombres}</b></div>`;
+  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calBarrioPie('calBarrioDeCalle')}</div>`);
+};
+
+// ¿Qué calle está en un barrio?
+window.calCallesDeBarrio=async ()=>{
+  await calCargarViaBarrio();
+  const bs=calListaBarrios().filter(b=>calBarrioVias[b.num] && calBarrioVias[b.num].length);
+  if(bs.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí.</div>'); return; }
+  const bar=bs[Math.floor(Math.random()*bs.length)];
+  calSel=null; calBarrioObj=null; calBarrioSel=bar.num;
+  if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
+  calMap.data.setStyle(calEstiloVia); calFitBarrio(bar.num);
+  const dentro=calBarrioVias[bar.num]; const dentroSet=new Set(dentro); calBarrioRespSet=dentroSet;
+  const correctoCod=dentro[Math.floor(Math.random()*dentro.length)];
+  const fuera=calListaVias().filter(v=>!dentroSet.has(v.cod));
+  const otras=_baraja(fuera).slice(0,3).map(v=>({cod:v.cod, n:v.n}));
+  const correcto={cod:correctoCod, n:(calViaNombre[correctoCod]||'?')};
+  const ops=_baraja([correcto, ...otras]);
+  const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespCallesDeBarrio(${o.cod})">${o.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Cuál de estas calles está en <b style="color:#00bcd4">${bar.n}</b>? (barrio resaltado)</div>${bot}${_calBarrioPie('calCallesDeBarrio')}</div>`);
+};
+window.calRespCallesDeBarrio=(cod)=>{
+  if(!calBarrioRespSet) return;
+  const bien=calBarrioRespSet.has(cod);
+  if(bien){ calAciertos++; calSel=cod; calMap.data.setStyle(calEstiloVia); }
+  else calFallos++;
+  const col=bien?'rgba(34,197,94,0.5)':'rgba(248,113,113,0.5)';
+  const msg=bien?`<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>`:`<div style="color:#f87171;font-weight:800">❌ ${calViaNombre[cod]||'Esa'} no está en ese barrio</div>`;
+  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calBarrioPie('calCallesDeBarrio')}</div>`);
 };
 
 function calInfoEstudiar(cod, nom){
