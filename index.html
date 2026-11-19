@@ -1538,7 +1538,7 @@ async function calCargarEnlaces(){
 function calEnlacesMenu(){
   calSel=null; calSel2=null; calSelY=null; calEnlaceSet=null; calOrdenSet.clear(); calLimpiarMarcadores(); if(calMap) calMap.data.setStyle(calEstiloVia);
   const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
-  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceDesemboca','📍 ¿Dónde desemboca o nace…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}${b('calEnlaceOrden','🔢 Ordena los cruces de X')}</div>`);
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceDesemboca','📍 ¿Dónde desemboca o nace…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}</div>`);
 }
 // Encaja dos vías a la vez en el mapa
 function calIrDosVias(a,b){
