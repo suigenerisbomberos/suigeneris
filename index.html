@@ -1042,6 +1042,7 @@ let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, 
 let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
 let calSel2=null, calSelY=null, calCruces=null, calParalelas=null, calExtremos=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
 let calOrden=null, calOrdenCorrecto=[], calOrdenUser=[], calOrdenBaraja=[];
+let calOrdenMarkers=[], calOrdenSet=new Set();
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1149,7 +1150,7 @@ function calActualizarVista(){
   }
   if(nuevos.length){ calMap.data.addGeoJson({type:'FeatureCollection', features:nuevos}); nuevos.forEach(f=>calEnMapa.add(f.properties.cod)); }
   const quitar=[];
-  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && c!==calSel2 && c!==calSelY && !calColores[c]) quitar.push(ft); });
+  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && c!==calSel2 && c!==calSelY && !calOrdenSet.has(c) && !calColores[c]) quitar.push(ft); });
   for(const ft of quitar){ calMap.data.remove(ft); calEnMapa.delete(ft.getProperty('cod')); }
 }
 // Asegura que una calle concreta esté dibujada (para resaltarla aunque esté fuera de vista)
@@ -1184,6 +1185,7 @@ function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
   if(calSel===cod || calSelY===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
   if(calSel2===cod) return {strokeColor:'#22ff66', strokeWeight:7, strokeOpacity:1, zIndex:19, visible:true};
+  if(calOrdenSet.has(cod)) return {strokeColor:'#c084fc', strokeWeight:6, strokeOpacity:1, zIndex:18, visible:true};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10, visible:true};
   // En modo Barrios las calles se atenúan para que destaquen las zonas
@@ -1195,7 +1197,7 @@ function calEstiloVia(feature){
 }
 
 window.calSetModo=async (m)=>{
-  calModo=m; calSel=null; calSel2=null; calSelY=null;
+  calModo=m; calSel=null; calSel2=null; calSelY=null; calOrdenSet.clear(); calLimpiarMarcadores();
   document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
   if(calMap) calMap.data.setStyle(calEstiloVia);
   // Capa de barrios: visible solo en modo Barrios
@@ -1520,7 +1522,7 @@ async function calCargarEnlaces(){
   }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; calExtremos=calExtremos||{}; calOrden=calOrden||{}; }
 }
 function calEnlacesMenu(){
-  calSel=null; calSel2=null; calSelY=null; calEnlaceSet=null; if(calMap) calMap.data.setStyle(calEstiloVia);
+  calSel=null; calSel2=null; calSelY=null; calEnlaceSet=null; calOrdenSet.clear(); calLimpiarMarcadores(); if(calMap) calMap.data.setStyle(calEstiloVia);
   const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
   calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceDesemboca','📍 ¿Dónde desemboca o nace…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}${b('calEnlaceOrden','🔢 Ordena los cruces de X')}</div>`);
 }
@@ -1596,6 +1598,14 @@ window.calRespEnlace=(cod)=>{
 
 // Ordena los cruces de una calle (tap en secuencia)
 function _arrEq(a,b){ return a.length===b.length && a.every((x,i)=>x===b[i]); }
+function calLimpiarMarcadores(){ if(calOrdenMarkers){ calOrdenMarkers.forEach(m=>m.setMap(null)); } calOrdenMarkers=[]; }
+function _calCentro(cod){ const b=calBBoxIndex[cod]; return b ? {lat:(b[0]+b[2])/2, lng:(b[1]+b[3])/2} : null; }
+function calMarcarNumero(cod, num, color){
+  const pos=_calCentro(cod); if(!pos || !calMap) return;
+  calOrdenMarkers.push(new google.maps.Marker({ position:pos, map:calMap,
+    label:{text:String(num), color:'#fff', fontWeight:'800', fontSize:'13px'},
+    icon:{path:google.maps.SymbolPath.CIRCLE, scale:12, fillColor:color, fillOpacity:1, strokeColor:'#111', strokeWeight:1} }));
+}
 window.calEnlaceOrden=()=>{
   if(!calOrden){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Cargando datos…</div>'); return; }
   const vs=calListaVias().filter(v=>calOrden[v.cod] && calOrden[v.cod].filter(c=>calViaNombre[c]).length>=3);
@@ -1608,10 +1618,12 @@ window.calEnlaceOrden=()=>{
   calOrdenBaraja=_baraja([...calOrdenCorrecto]);
   calOrdenUser=[];
   calEnlaceObj=via; calEnlaceActividad='orden';
+  calLimpiarMarcadores();
+  calOrdenSet=new Set(calOrdenCorrecto); calOrdenCorrecto.forEach(c=>calAsegurarVia(c));
   calAsegurarVia(via.cod); calSel=via.cod; calSel2=null; calSelY=null; calMap.data.setStyle(calEstiloVia); calIrBBox(via.bbox);
   calOrdenRender();
 };
-window.calOrdenTap=(cod)=>{ if(calOrdenUser.includes(cod)) return; calOrdenUser.push(cod); calOrdenRender(); };
+window.calOrdenTap=(cod)=>{ if(calOrdenUser.includes(cod)) return; calOrdenUser.push(cod); calMarcarNumero(cod, calOrdenUser.length, '#00bcd4'); calOrdenRender(); };
 function calOrdenRender(){
   const via=calEnlaceObj;
   const filas=calOrdenBaraja.map(cod=>{
@@ -1625,6 +1637,9 @@ function calOrdenRender(){
   } else {
     const ok=_arrEq(calOrdenUser, calOrdenCorrecto) || _arrEq(calOrdenUser, [...calOrdenCorrecto].reverse());
     if(ok) calAciertos++; else calFallos++;
+    // Mostrar en el mapa la solución: cada cruce con su número correcto (en verde)
+    calLimpiarMarcadores();
+    calOrdenCorrecto.forEach((c,i)=>calMarcarNumero(c, i+1, '#16a34a'));
     const correctoTxt=calOrdenCorrecto.map((c,i)=>`${i+1}. ${calViaNombre[c]}`).join('<br>');
     const col=ok?'rgba(34,197,94,0.5)':'rgba(248,113,113,0.5)';
     const msg=ok?`<div style="color:#22c55e;font-weight:800">✅ ¡Orden correcto!</div>`:`<div style="color:#f87171;font-weight:800">❌ Ese no es el orden</div><div style="font-size:12px;color:var(--text2);margin-top:4px">Orden correcto:<br>${correctoTxt}</div>`;
