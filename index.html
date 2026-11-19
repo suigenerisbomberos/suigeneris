@@ -990,6 +990,8 @@ window.renderCallejero = () => {
     c.innerHTML = `
       <style>
         #cal-app{max-width:100%;margin:0 auto}
+        /* En ordenador, el Callejero se sale del margen estrecho y llega casi a los bordes */
+        @media(min-width:761px){ #cal-app{width:94vw;max-width:1680px;margin-left:calc(50% - 47vw)} }
         .cal-barra{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
         .cal-modos{display:flex;gap:8px;flex-wrap:wrap}
         .cal-modo-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text2);border-radius:12px;padding:9px 15px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
