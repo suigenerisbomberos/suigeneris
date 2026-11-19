@@ -357,10 +357,10 @@ window.activarVistaPrevia = async () => {
     simulacrosRealizados: 0
   };
   showScreen('alumno');
-  await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas();
+  // Reutiliza los datos ya cargados por el panel de admin (no los vuelve a pedir)
+  if(!temas.length || !preguntas.length){ await Promise.all([cargarBloques(), cargarTemas()]); await cargarTodasPreguntas(); }
   renderInicio(); renderTemas(); renderProgreso();
   actualizarVisibilidadCallejero();
-  if(puedeVerCallejero()) calPrefetchCallejero();
   showAlumnoTab('inicio');
   mostrarToast('👁️ Modo Vista Previa', 'Estás viendo la plataforma como un alumno');
 };
@@ -401,7 +401,6 @@ async function cargarAlumno() {
   }
   renderInicio(); renderTemas(); renderProgreso();
   actualizarVisibilidadCallejero();
-  if(puedeVerCallejero()) calPrefetchCallejero();
   showAlumnoTab('inicio');
 }
 
@@ -1040,6 +1039,7 @@ let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=nul
 let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
+let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1082,8 +1082,8 @@ async function calInit(){
     calMap.data.setStyle(calEstiloVia);
     calMap.data.addListener('click', calClickFeature); // clic justo sobre la calle
     calMap.addListener('click', calClickMapa);         // clic cerca de la calle
-    // Al cambiar el zoom, re-aplica estilos (mostrar/ocultar vías menores)
-    calMap.addListener('zoom_changed', ()=>{ clearTimeout(calZoomT); calZoomT=setTimeout(()=>{ if(calMap) calMap.data.setStyle(calEstiloVia); }, 150); });
+    // Al moverse/acercar el mapa, carga las calles de esa zona (y descarga las que salen)
+    calMap.addListener('idle', calActualizarVista);
     await calCargarCalles();
     await calCargarDistritos();
     await calCargarColoresAlumno();
@@ -1106,31 +1106,55 @@ async function calCargarCalles(){
   try{
     const gj = await calPrefetchGeojson();
     if(!gj){ calCargando=false; return; }
-    const principales=[], resto=[];
-    for(const f of gj.features){ (f.properties.p===1 ? principales : resto).push(f); }
-    // Dibuja ya las principales (el mapa aparece rápido)
-    calMap.data.addGeoJson({type:'FeatureCollection', features:principales});
-    // El índice de toque/búsqueda y el resto de calles, sin bloquear el primer dibujado
-    setTimeout(()=>{
-      calRaw=[];
-      for(const f of gj.features){
-        const cod=f.properties.cod, n=f.properties.n, segs=[];
-        let s=90,w=180,no=-90,e=-180;
-        for(const linea of f.geometry.coordinates){
-          for(let i=0;i<linea.length;i++){
-            const p=linea[i];
-            if(p[1]<s)s=p[1]; if(p[1]>no)no=p[1]; if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0];
-            if(i<linea.length-1){ const b=linea[i+1]; segs.push([p[0]*CAL_KX,p[1]*CAL_KY,b[0]*CAL_KX,b[1]*CAL_KY]); }
-          }
+    // Índices (ligeros, no dibujan): para toque, búsqueda y carga por zona
+    calRaw=[]; calBBoxIndex={}; calFeatIndex={};
+    for(const f of gj.features){
+      const cod=f.properties.cod, n=f.properties.n, segs=[];
+      let s=90,w=180,no=-90,e=-180;
+      for(const linea of f.geometry.coordinates){
+        for(let i=0;i<linea.length;i++){
+          const p=linea[i];
+          if(p[1]<s)s=p[1]; if(p[1]>no)no=p[1]; if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0];
+          if(i<linea.length-1){ const b=linea[i+1]; segs.push([p[0]*CAL_KX,p[1]*CAL_KY,b[0]*CAL_KX,b[1]*CAL_KY]); }
         }
-        calRaw.push({cod,n,d:f.properties.d,segs,bbox:[s,w,no,e]});
-        calViaNombre[cod]=n;
       }
-      try{ calMap.data.addGeoJson({type:'FeatureCollection', features:resto}); calMap.data.setStyle(calEstiloVia); }catch(e){}
-    }, 60);
+      const bbox=[s,w,no,e];
+      calRaw.push({cod,n,d:f.properties.d,segs,bbox});
+      calViaNombre[cod]=n; calBBoxIndex[cod]=bbox; calFeatIndex[cod]=f;
+    }
+    calActualizarVista(); // dibuja SOLO lo que se ve ahora
   }
   catch(e){ console.warn('calles callejero', e); }
   calCargando=false;
+}
+
+// Dibuja solo las calles dentro de la vista actual (y, alejado, solo principales).
+// Así el mapa no pinta nunca miles de calles de golpe: va fluido.
+function calActualizarVista(){
+  if(!calMapaGJ || !calMap) return;
+  const b=calMap.getBounds(); if(!b) return;
+  const z=calMap.getZoom();
+  const ne=b.getNorthEast(), sw=b.getSouthWest();
+  const N=ne.lat(), E=ne.lng(), S=sw.lat(), W=sw.lng();
+  const quiero=new Set(), nuevos=[];
+  for(const f of calMapaGJ.features){
+    const cod=f.properties.cod;
+    if(z<14 && f.properties.p!==1) continue;      // alejado: solo principales
+    const bb=calBBoxIndex[cod]; if(!bb) continue;
+    if(bb[0]>N || bb[2]<S || bb[1]>E || bb[3]<W) continue; // fuera de la vista
+    quiero.add(cod);
+    if(!calEnMapa.has(cod)) nuevos.push(f);
+  }
+  if(nuevos.length){ calMap.data.addGeoJson({type:'FeatureCollection', features:nuevos}); nuevos.forEach(f=>calEnMapa.add(f.properties.cod)); }
+  const quitar=[];
+  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && !calColores[c]) quitar.push(ft); });
+  for(const ft of quitar){ calMap.data.remove(ft); calEnMapa.delete(ft.getProperty('cod')); }
+}
+// Asegura que una calle concreta esté dibujada (para resaltarla aunque esté fuera de vista)
+function calAsegurarVia(cod){
+  if(calEnMapa.has(cod)) return;
+  const f=calFeatIndex[cod]; if(!f) return;
+  calMap.data.addGeoJson({type:'FeatureCollection', features:[f]}); calEnMapa.add(cod);
 }
 
 // Distancia (m) de un punto a un segmento
@@ -1159,8 +1183,6 @@ function calEstiloVia(feature){
   if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10, visible:true};
-  // Rendimiento: con el mapa alejado, solo se dibujan las vías principales
-  if(calMap && calMap.getZoom()<15 && feature.getProperty('p')!==1) return {visible:false};
   // En modo Barrios las calles se atenúan para que destaquen las zonas
   if(calModo==='barrios') return {strokeColor:'#ff7d33', strokeWeight:1, strokeOpacity:0.22, zIndex:1};
   // Si hay un distrito elegido, las demás calles se apagan para que destaque
@@ -1228,7 +1250,7 @@ window.calBuscar=(q)=>{
 window.calIrACalle=(cod)=>{
   const v=calRaw.find(x=>x.cod===cod); if(!v) return;
   calModo='estudiar'; document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m==='estudiar'));
-  calSel=cod; calMap.data.setStyle(calEstiloVia); calIrBBox(v.bbox); calInfoEstudiar(cod, v.n);
+  calAsegurarVia(cod); calSel=cod; calMap.data.setStyle(calEstiloVia); calIrBBox(v.bbox); calInfoEstudiar(cod, v.n);
   const inp=$('cal-buscar'); if(inp) inp.value='';
 };
 
@@ -1237,7 +1259,7 @@ function calQueVia(){
   const vs=calListaVias();
   if(vs.length<4){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Necesito más calles (elige otro distrito).</div>'); return; }
   calObjetivo=vs[Math.floor(Math.random()*vs.length)];
-  calSel=calObjetivo.cod; calMap.data.setStyle(calEstiloVia); calIrBBox(calObjetivo.bbox);
+  calAsegurarVia(calObjetivo.cod); calSel=calObjetivo.cod; calMap.data.setStyle(calEstiloVia); calIrBBox(calObjetivo.bbox);
   const otras=_baraja(vs.filter(v=>v.cod!==calObjetivo.cod)).slice(0,3);
   const ops=_baraja([calObjetivo, ...otras]);
   const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespQueVia(${o.cod})">${o.n}</button>`).join('');
@@ -1349,7 +1371,7 @@ window.calBarrioDeCalle=async ()=>{
   const vs=calListaVias().filter(v=>calViaBarrio[v.cod] && calViaBarrio[v.cod].length);
   if(vs.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí.</div>'); return; }
   const via=vs[Math.floor(Math.random()*vs.length)];
-  calBarrioObj=null; calBarrioSel=null; calSel=via.cod;
+  calBarrioObj=null; calBarrioSel=null; calAsegurarVia(via.cod); calSel=via.cod;
   if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
   calMap.data.setStyle(calEstiloVia); calIrBBox(via.bbox);
   const suyos=new Set(calViaBarrio[via.cod]); calBarrioRespSet=suyos;
@@ -1393,7 +1415,7 @@ window.calCallesDeBarrio=async ()=>{
 window.calRespCallesDeBarrio=(cod)=>{
   if(!calBarrioRespSet) return;
   const bien=calBarrioRespSet.has(cod);
-  if(bien){ calAciertos++; calSel=cod; calMap.data.setStyle(calEstiloVia); }
+  if(bien){ calAciertos++; calAsegurarVia(cod); calSel=cod; calMap.data.setStyle(calEstiloVia); }
   else calFallos++;
   const col=bien?'rgba(34,197,94,0.5)':'rgba(248,113,113,0.5)';
   const msg=bien?`<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>`:`<div style="color:#f87171;font-weight:800">❌ ${calViaNombre[cod]||'Esa'} no está en ese barrio</div>`;
@@ -1470,7 +1492,7 @@ window.calNuevaLocaliza=calNuevaLocaliza;
 function calComprobarLocaliza(cod,nom){
   if(!calObjetivo) return;
   if(cod===calObjetivo.cod){
-    calAciertos++; calSel=cod; calMap.data.setStyle(calEstiloVia);
+    calAciertos++; calAsegurarVia(cod); calSel=cod; calMap.data.setStyle(calEstiloVia);
     calSetInfo(`<div class="cal-ficha" style="border-color:rgba(34,197,94,0.5)"><div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${nom}</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Siguiente →</button></div>`);
   }else{
     calFallos++;
