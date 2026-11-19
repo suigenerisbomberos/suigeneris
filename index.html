@@ -1338,7 +1338,7 @@ function calRefrescarNombres(){
   // Separación mínima entre nombres SEGÚN el zoom (~52 px): al acercar se permite
   // mucho más juntos, así aparecen casi todas las calles.
   const mpp=156543.03392*Math.cos(((N+S)/2)*RAD)/Math.pow(2, calMap.getZoom());
-  const MINSEP=Math.max(10, 52*mpp);
+  const MINSEP=Math.max(7, 42*mpp);
   for(const cod of calEnMapa){
     const nombre=calViaNombre[cod]; if(!nombre) continue;
     const bb=calBBoxIndex[cod]; if(!bb) continue;
@@ -1353,9 +1353,9 @@ function calRefrescarNombres(){
       if(choca) continue; // demasiado cerca de otro nombre: lo saltamos
       placed.push(pt);
       labels.push({lat:pt.lat, lng:pt.lng, ang:pt.ang, text:nombre});
-      if(++n>=200) break;
+      if(++n>=350) break;
     }
-    if(n>=200) break;
+    if(n>=350) break;
   }
   calLabelOverlay._labels=labels;
   if(calLabelOverlay.draw) calLabelOverlay.draw();
