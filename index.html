@@ -1018,7 +1018,7 @@ window.renderCallejero = () => {
           <select id="cal-distrito" class="cal-sel" onchange="calSetDistrito(this.value)"><option value="">🏙️ Toda Málaga</option></select>
           <input id="cal-buscar" class="cal-sel" placeholder="🔎 Buscar calle…" oninput="calBuscar(this.value)" style="min-width:150px">
           <button class="cal-modo-btn" onclick="calIrTodaMalaga()" title="Ver toda Málaga">🗺️</button>
-          <button class="cal-modo-btn" id="cal-nombres-btn" onclick="calToggleNombres()" title="Mostrar u ocultar los nombres oficiales de las calles (aparecen al ampliar)">🔤 Nombres</button>
+          <button class="cal-modo-btn" id="cal-nombres-btn" onclick="calToggleNombres()" title="Mostrar u ocultar los nombres oficiales de las calles (aparecen al ampliar)">🔤 Ver calles</button>
           ${isAdmin?'<span class="cal-admin-nota">👁️ Vista admin · módulo en obras</span>':''}
         </div>
         <div id="cal-barra-info" class="cal-barra-info"></div>
@@ -1261,7 +1261,7 @@ window.calIrTodaMalaga=()=>{ calMap.setCenter(CAL_CENTRO); calMap.setZoom(13); }
 window.calToggleNombres=()=>{
   calNombres=!calNombres;
   const b=$('cal-nombres-btn');
-  if(b){ b.textContent = calNombres ? '🔤 Nombres ✓' : '🔤 Nombres'; b.classList.toggle('active', calNombres); }
+  if(b){ b.textContent = calNombres ? '🔤 Ver calles ✓' : '🔤 Ver calles'; b.classList.toggle('active', calNombres); }
   calRefrescarNombres();
 };
 // Puntos de etiqueta (ancla + ángulo) a lo largo de una vía. En calles largas
