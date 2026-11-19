@@ -1040,7 +1040,7 @@ let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
 let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
-let calSel2=null, calCruces=null, calParalelas=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce';
+let calSel2=null, calCruces=null, calParalelas=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1537,6 +1537,7 @@ function _calEnlaceQuiz(tipo){
   calEnlaceObj = via; calEnlaceActividad = tipo;
   const correctos = new Set(mapa[via.cod]); calEnlaceSet = correctos;
   const correctoCod = mapa[via.cod][Math.floor(Math.random()*mapa[via.cod].length)];
+  calEnlaceCorrecto = correctoCod;
   const fuera = calListaVias().filter(v=>v.cod!==via.cod && !correctos.has(v.cod));
   const otras = _baraja(fuera).slice(0,3).map(v=>({cod:v.cod, n:v.n}));
   const ops = _baraja([{cod:correctoCod, n:calViaNombre[correctoCod]||'?'}, ...otras]);
@@ -1552,11 +1553,13 @@ window.calRespEnlace=(cod)=>{
   if(!calEnlaceSet) return;
   const bien = calEnlaceSet.has(cod);
   if(bien){ calAciertos++; calAsegurarVia(cod); calSel2=cod; }
-  else { calFallos++; const algun=[...calEnlaceSet][0]; if(algun){ calAsegurarVia(algun); calSel2=algun; } }
+  else { calFallos++; if(calEnlaceCorrecto!=null){ calAsegurarVia(calEnlaceCorrecto); calSel2=calEnlaceCorrecto; } }
   calMap.data.setStyle(calEstiloVia);
   const fn = calEnlaceActividad==='cruce' ? 'calEnlaceCruce' : 'calEnlaceParalela';
   const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
-  const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>` : `<div style="color:#f87171;font-weight:800">❌ ${calViaNombre[cod]||'Esa'} no. La correcta está en verde.</div>`;
+  const msg = bien
+    ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>`
+    : `<div style="color:#f87171;font-weight:800">❌ No era ${calViaNombre[cod]||'esa'}</div><div style="font-size:13px;color:var(--text2);margin-top:4px">La correcta es <b style="color:#22c55e">${calViaNombre[calEnlaceCorrecto]||'—'}</b> (en verde en el mapa)</div>`;
   calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calEnlacePie(fn)}</div>`);
 };
 
