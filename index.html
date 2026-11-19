@@ -987,7 +987,7 @@ window.renderCallejero = () => {
   if(!document.getElementById('cal-app')){
     c.innerHTML = `
       <style>
-        #cal-app{max-width:900px;margin:0 auto}
+        #cal-app{max-width:100%;margin:0 auto}
         .cal-barra{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
         .cal-modos{display:flex;gap:8px;flex-wrap:wrap}
         .cal-modo-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text2);border-radius:12px;padding:9px 15px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
@@ -996,7 +996,7 @@ window.renderCallejero = () => {
         .cal-sel{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:#f1f5f9;border-radius:12px;padding:9px 12px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
         .cal-barra-info{font-size:13px;color:var(--text2);background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:10px}
         .cal-layout{display:flex;gap:12px;align-items:stretch}
-        #cal-map{flex:1;height:60vh;min-height:360px;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:#1a1f2e}
+        #cal-map{flex:1;height:72vh;min-height:380px;border-radius:14px;overflow:hidden;border:1px solid var(--border);background:#1a1f2e}
         .cal-info-ext{width:300px;flex-shrink:0;overflow:auto;max-height:60vh}
         .cal-info-ext:empty{display:none}
         @media(max-width:760px){ .cal-layout{flex-direction:column} #cal-map{height:52vh;min-height:300px} .cal-info-ext{width:auto;max-height:none} }
@@ -1035,7 +1035,7 @@ const CAL_PALETA=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7'];
 let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, calCargando=false;
 let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
-let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null;
+let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1078,6 +1078,8 @@ async function calInit(){
     calMap.data.setStyle(calEstiloVia);
     calMap.data.addListener('click', calClickFeature); // clic justo sobre la calle
     calMap.addListener('click', calClickMapa);         // clic cerca de la calle
+    // Al cambiar el zoom, re-aplica estilos (mostrar/ocultar vías menores)
+    calMap.addListener('zoom_changed', ()=>{ clearTimeout(calZoomT); calZoomT=setTimeout(()=>{ if(calMap) calMap.data.setStyle(calEstiloVia); }, 150); });
     await calCargarCalles();
     await calCargarDistritos();
     await calCargarColoresAlumno();
@@ -1091,8 +1093,7 @@ async function calCargarCalles(){
   if(calCargando) return; calCargando=true;
   try{
     const r=await fetch('callejero/data/cal_mapa.geojson'); const gj=await r.json();
-    calMap.data.addGeoJson(gj);
-    calRaw=[];
+    calRaw=[]; const principales=[], resto=[];
     for(const f of gj.features){
       const cod=f.properties.cod, n=f.properties.n, segs=[];
       let s=90,w=180,no=-90,e=-180;
@@ -1105,7 +1106,11 @@ async function calCargarCalles(){
       }
       calRaw.push({cod,n,d:f.properties.d,segs,bbox:[s,w,no,e]});
       calViaNombre[cod]=n;
+      (f.properties.p===1 ? principales : resto).push(f);
     }
+    // Primero las principales (el mapa aparece rápido); el resto, en segundo plano.
+    calMap.data.addGeoJson({type:'FeatureCollection', features:principales});
+    setTimeout(()=>{ try{ calMap.data.addGeoJson({type:'FeatureCollection', features:resto}); calMap.data.setStyle(calEstiloVia); }catch(e){} }, 400);
   }
   catch(e){ console.warn('calles callejero', e); }
   calCargando=false;
@@ -1134,14 +1139,16 @@ function calTolerancia(latLng){
 
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
-  if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20};
+  if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
+  const col=calColores[cod];
+  if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10, visible:true};
+  // Rendimiento: con el mapa alejado, solo se dibujan las vías principales
+  if(calMap && calMap.getZoom()<15 && feature.getProperty('p')!==1) return {visible:false};
   // En modo Barrios las calles se atenúan para que destaquen las zonas
   if(calModo==='barrios') return {strokeColor:'#ff7d33', strokeWeight:1, strokeOpacity:0.22, zIndex:1};
   // Si hay un distrito elegido, las demás calles se apagan para que destaque
   if(calDistrito && feature.getProperty('d')!==calDistrito)
     return {strokeColor:'#64748b', strokeWeight:1, strokeOpacity:0.12, zIndex:0};
-  const col=calColores[cod];
-  if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10};
   return {strokeColor:'#ff7d33', strokeWeight:3, strokeOpacity:0.75, zIndex:1};
 }
 
