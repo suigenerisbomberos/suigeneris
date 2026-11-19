@@ -1330,7 +1330,7 @@ function calCrearOverlayNombres(){
 function calRefrescarNombres(){
   calCrearOverlayNombres();
   if(!calLabelOverlay) return;
-  if(!calNombres || !calMap || calMap.getZoom() < 15){ calLabelOverlay._labels=[]; if(calLabelOverlay.draw) calLabelOverlay.draw(); return; }
+  if(!calNombres || !calMap || calMap.getZoom() < 14){ calLabelOverlay._labels=[]; if(calLabelOverlay.draw) calLabelOverlay.draw(); return; }
   const bnd=calMap.getBounds(); if(!bnd) return;
   const ne=bnd.getNorthEast(), sw=bnd.getSouthWest();
   const N=ne.lat(), E=ne.lng(), S=sw.lat(), W=sw.lng();
