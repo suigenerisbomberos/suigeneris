@@ -953,6 +953,7 @@ window.showAlumnoTab=(tab)=>{
   document.querySelectorAll('.alumno-tab').forEach(t=>t.classList.remove('active'));
   document.querySelector(`.alumno-tab-btn[data-tab="${tab}"]`)?.classList.add('active');
   document.querySelector(`.alumno-tab[data-tab="${tab}"]`)?.classList.add('active');
+  document.querySelector('[data-screen="alumno"] .content')?.classList.toggle('cal-activa', tab==='callejero');
   if(tab==='inicio') renderInicio();
   if(tab==='temas') renderTemas();
   if(tab==='revisar'){ renderRevisar(); cargarMisFalladas(); cargarMisConsultas(); }
@@ -989,8 +990,6 @@ window.renderCallejero = () => {
     c.innerHTML = `
       <style>
         #cal-app{max-width:100%;margin:0 auto}
-        /* En ordenador, el Callejero se sale del margen estrecho y llega casi a los bordes */
-        @media(min-width:761px){ #cal-app{width:94vw;max-width:1680px;margin-left:calc(50% - 47vw)} }
         .cal-barra{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
         .cal-modos{display:flex;gap:8px;flex-wrap:wrap}
         .cal-modo-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text2);border-radius:12px;padding:9px 15px;font-size:14px;font-weight:700;font-family:'Outfit',sans-serif;cursor:pointer}
@@ -2034,7 +2033,9 @@ body {
 .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
 .tab-btn:hover:not(.active) { color: var(--text); }
 
-.content { flex: 1; overflow-y: auto; padding: 32px 24px; max-width: 1180px; margin: 0 auto; width: 100%; }
+.content { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 32px 24px; max-width: 1180px; margin: 0 auto; width: 100%; }
+/* El Callejero usa una columna más ancha (sin sacar barra horizontal) */
+.content.cal-activa { max-width: 1680px; }
 .tab-panel { display: none; animation: fadeUp 0.3s ease; }
 .tab-panel.active { display: block; }
 .card { background: linear-gradient(135deg, var(--card), var(--card2)); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
