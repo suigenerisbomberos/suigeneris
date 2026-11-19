@@ -1165,8 +1165,13 @@ function calElegir(cod, nom){
   else if(calModo==='localiza'){ calComprobarLocaliza(cod, nom); }
 }
 
-// Centrar el mapa en una vía (o toda Málaga)
-function calIrBBox(b){ if(b) calMap.fitBounds({south:b[0], west:b[1], north:b[2], east:b[3]}); }
+// Encaja unos límites con margen y SIN acercar demasiado (tope de zoom)
+function calFit(bounds, maxZoom){
+  calMap.fitBounds(bounds, 70);
+  google.maps.event.addListenerOnce(calMap,'idle',()=>{ if(calMap.getZoom()>maxZoom) calMap.setZoom(maxZoom); });
+}
+// Centrar el mapa en una vía (sin pegarse demasiado)
+function calIrBBox(b){ if(b) calFit({south:b[0], west:b[1], north:b[2], east:b[3]}, 16); }
 window.calIrTodaMalaga=()=>{ calMap.setCenter(CAL_CENTRO); calMap.setZoom(13); };
 
 // Buscador de calle (acento-insensible, usa _norm del admin)
@@ -1213,7 +1218,7 @@ async function calCargarBarrios(){
   try{
     const r=await fetch('callejero/data/cal_barrios.geojson'); const gj=await r.json();
     calBarriosLayer.addGeoJson(gj);
-    calBarrios=gj.features.map(f=>({num:f.properties.num, n:f.properties.n}));
+    calBarrios=gj.features.map(f=>({num:f.properties.num, n:f.properties.n, d:f.properties.d}));
     calBarriosLayer.setStyle(calBarrioStyle);
     calBarriosLayer.addListener('click', calClickBarrio);
     calBarriosCargado=true;
@@ -1222,8 +1227,11 @@ async function calCargarBarrios(){
 function calBarrioStyle(feature){
   const num=feature.getProperty('num');
   if(calBarrioSel===num) return {fillColor:'#00e5ff', fillOpacity:0.5, strokeColor:'#00bcd4', strokeWeight:2, zIndex:5};
+  if(calDistrito && feature.getProperty('d')!==calDistrito)
+    return {fillColor:'#64748b', fillOpacity:0.03, strokeColor:'#64748b', strokeWeight:0.5, zIndex:2};
   return {fillColor:'#D4500A', fillOpacity:0.12, strokeColor:'#ff7d33', strokeWeight:1, zIndex:3};
 }
+function calListaBarrios(){ return calDistrito!=null ? calBarrios.filter(b=>b.d===calDistrito) : calBarrios; }
 function calClickBarrio(ev){
   const num=ev.feature.getProperty('num'), n=ev.feature.getProperty('n');
   // Tocar un barrio siempre muestra su nombre (estudiar)
@@ -1235,14 +1243,15 @@ function calFitBarrio(num){
   if(!target) return;
   const b=new google.maps.LatLngBounds();
   target.getGeometry().forEachLatLng(ll=>b.extend(ll));
-  calMap.fitBounds(b);
+  calFit(b, 15);
 }
 window.calBarrioPregunta=()=>{
-  if(calBarrios.length<4) return;
+  const pool=calListaBarrios();
+  if(pool.length<4){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Este distrito tiene muy pocos barrios para preguntar. Elige otro o "Toda Málaga".</div>'); return; }
   calBarrioQuiz=true;
-  calBarrioObj=calBarrios[Math.floor(Math.random()*calBarrios.length)];
+  calBarrioObj=pool[Math.floor(Math.random()*pool.length)];
   calBarrioSel=calBarrioObj.num; calBarriosLayer.setStyle(calBarrioStyle); calFitBarrio(calBarrioObj.num);
-  const otras=_baraja(calBarrios.filter(b=>b.num!==calBarrioObj.num)).slice(0,3);
+  const otras=_baraja(pool.filter(b=>b.num!==calBarrioObj.num)).slice(0,3);
   const ops=_baraja([calBarrioObj, ...otras]);
   const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calBarrioResp(${o.num})">${o.n}</button>`).join('');
   calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué barrio es el resaltado en cian?</div>${bot}<div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div></div>`);
@@ -1270,6 +1279,7 @@ function calInfoEstudiar(cod, nom){
 
 window.calPonColor=(cod,color)=>{
   if(color) calColores[cod]=color; else delete calColores[cod];
+  calSel=null; // quitar el resaltado cian para que se vea el color elegido
   calMap.data.setStyle(calEstiloVia);
   if(!modoVistaPrevia && currentUser){
     const ref=doc(db,'alumnos',currentUser.uid,'cal_vias',String(cod));
@@ -1296,10 +1306,14 @@ async function calCargarDistritos(){
 window.calSetDistrito=(v)=>{
   calDistrito = (v==='' ? null : Number(v));
   if(calMap) calMap.data.setStyle(calEstiloVia);
+  if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
   const d = calDistrito!=null ? calDistritos.find(x=>x.num===calDistrito) : null;
-  if(d && d.sw && d.ne){ calMap.fitBounds({south:d.sw[0], west:d.sw[1], north:d.ne[0], east:d.ne[1]}); }
+  if(d && d.sw && d.ne){ calFit({south:d.sw[0], west:d.sw[1], north:d.ne[0], east:d.ne[1]}, 15); }
   else { calMap.setCenter(CAL_CENTRO); calMap.setZoom(13); }
+  // Refrescar la actividad en curso para que respete el distrito
   if(calModo==='localiza') calNuevaLocaliza();
+  else if(calModo==='quevia') calQueVia();
+  else if(calModo==='barrios' && calBarrioQuiz) calBarrioPregunta();
 };
 
 function calListaVias(){
