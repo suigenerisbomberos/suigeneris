@@ -1040,7 +1040,7 @@ let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
 let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
-let calSel2=null, calCruces=null, calParalelas=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
+let calSel2=null, calSelY=null, calCruces=null, calParalelas=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1148,7 +1148,7 @@ function calActualizarVista(){
   }
   if(nuevos.length){ calMap.data.addGeoJson({type:'FeatureCollection', features:nuevos}); nuevos.forEach(f=>calEnMapa.add(f.properties.cod)); }
   const quitar=[];
-  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && c!==calSel2 && !calColores[c]) quitar.push(ft); });
+  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && c!==calSel2 && c!==calSelY && !calColores[c]) quitar.push(ft); });
   for(const ft of quitar){ calMap.data.remove(ft); calEnMapa.delete(ft.getProperty('cod')); }
 }
 // Asegura que una calle concreta esté dibujada (para resaltarla aunque esté fuera de vista)
@@ -1181,7 +1181,7 @@ function calTolerancia(latLng){
 
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
-  if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
+  if(calSel===cod || calSelY===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
   if(calSel2===cod) return {strokeColor:'#22ff66', strokeWeight:7, strokeOpacity:1, zIndex:19, visible:true};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10, visible:true};
@@ -1194,7 +1194,7 @@ function calEstiloVia(feature){
 }
 
 window.calSetModo=async (m)=>{
-  calModo=m; calSel=null; calSel2=null;
+  calModo=m; calSel=null; calSel2=null; calSelY=null;
   document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
   if(calMap) calMap.data.setStyle(calEstiloVia);
   // Capa de barrios: visible solo en modo Barrios
@@ -1517,9 +1517,17 @@ async function calCargarEnlaces(){
   }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; }
 }
 function calEnlacesMenu(){
-  calSel=null; calSel2=null; calEnlaceSet=null; if(calMap) calMap.data.setStyle(calEstiloVia);
+  calSel=null; calSel2=null; calSelY=null; calEnlaceSet=null; if(calMap) calMap.data.setStyle(calEstiloVia);
   const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
-  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}</div>`);
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}</div>`);
+}
+// Encaja dos vías a la vez en el mapa
+function calIrDosVias(a,b){
+  const ba=calBBoxIndex[a], bb=calBBoxIndex[b]; if(!ba||!bb) return;
+  const B=new google.maps.LatLngBounds();
+  B.extend({lat:ba[0],lng:ba[1]}); B.extend({lat:ba[2],lng:ba[3]});
+  B.extend({lat:bb[0],lng:bb[1]}); B.extend({lat:bb[2],lng:bb[3]});
+  calFit(B, 15);
 }
 window.calEnlacesMenu=calEnlacesMenu;
 function _calEnlacePie(fn){
@@ -1549,13 +1557,32 @@ function _calEnlaceQuiz(tipo){
 }
 window.calEnlaceCruce=()=>_calEnlaceQuiz('cruce');
 window.calEnlaceParalela=()=>_calEnlaceQuiz('paralela');
+window.calEnlaceUne=()=>{
+  if(!calCruces){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Cargando datos…</div>'); return; }
+  const conect = calListaVias().filter(v=>calCruces[v.cod] && calCruces[v.cod].filter(c=>calViaNombre[c]).length>=2);
+  if(conect.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí. Prueba "Toda Málaga".</div>'); return; }
+  const C = conect[Math.floor(Math.random()*conect.length)];
+  const vecinos = _baraja(calCruces[C.cod].filter(c=>calViaNombre[c]));
+  const X=vecinos[0], Y=vecinos[1];
+  const setY=new Set(calCruces[Y]||[]);
+  const correctos=(calCruces[X]||[]).filter(c=>setY.has(c)); // vías que cruzan X e Y (incluye C)
+  calEnlaceSet=new Set(correctos); calEnlaceActividad='une';
+  calEnlaceCorrecto = correctos.includes(C.cod) ? C.cod : correctos[0];
+  calAsegurarVia(X); calAsegurarVia(Y); calSel=X; calSelY=Y; calSel2=null;
+  calMap.data.setStyle(calEstiloVia); calIrDosVias(X,Y);
+  const fuera=calListaVias().filter(v=>!calEnlaceSet.has(v.cod) && v.cod!==X && v.cod!==Y);
+  const otras=_baraja(fuera).slice(0,3).map(v=>({cod:v.cod,n:v.n}));
+  const ops=_baraja([{cod:calEnlaceCorrecto,n:calViaNombre[calEnlaceCorrecto]||'?'}, ...otras]);
+  const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespEnlace(${o.cod})">${o.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué vía une <b style="color:#00e5ff">${calViaNombre[X]||'?'}</b> con <b style="color:#00e5ff">${calViaNombre[Y]||'?'}</b>?</div>${bot}${_calEnlacePie('calEnlaceUne')}</div>`);
+};
 window.calRespEnlace=(cod)=>{
   if(!calEnlaceSet) return;
   const bien = calEnlaceSet.has(cod);
   if(bien){ calAciertos++; calAsegurarVia(cod); calSel2=cod; }
   else { calFallos++; if(calEnlaceCorrecto!=null){ calAsegurarVia(calEnlaceCorrecto); calSel2=calEnlaceCorrecto; } }
   calMap.data.setStyle(calEstiloVia);
-  const fn = calEnlaceActividad==='cruce' ? 'calEnlaceCruce' : 'calEnlaceParalela';
+  const fn = {cruce:'calEnlaceCruce', paralela:'calEnlaceParalela', une:'calEnlaceUne'}[calEnlaceActividad] || 'calEnlacesMenu';
   const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
   const msg = bien
     ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>`
