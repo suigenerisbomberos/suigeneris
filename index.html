@@ -1182,7 +1182,7 @@ function calTolerancia(latLng){
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
   if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
-  if(calSel2===cod) return {strokeColor:'#f59e0b', strokeWeight:6, strokeOpacity:1, zIndex:19, visible:true};
+  if(calSel2===cod) return {strokeColor:'#22ff66', strokeWeight:7, strokeOpacity:1, zIndex:19, visible:true};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10, visible:true};
   // En modo Barrios las calles se atenúan para que destaquen las zonas
@@ -1556,7 +1556,7 @@ window.calRespEnlace=(cod)=>{
   calMap.data.setStyle(calEstiloVia);
   const fn = calEnlaceActividad==='cruce' ? 'calEnlaceCruce' : 'calEnlaceParalela';
   const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
-  const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>` : `<div style="color:#f87171;font-weight:800">❌ ${calViaNombre[cod]||'Esa'} no. La correcta está en ámbar.</div>`;
+  const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>` : `<div style="color:#f87171;font-weight:800">❌ ${calViaNombre[cod]||'Esa'} no. La correcta está en verde.</div>`;
   calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calEnlacePie(fn)}</div>`);
 };
 
