@@ -1041,6 +1041,7 @@ let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=n
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
 let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
 let calSel2=null, calSelY=null, calCruces=null, calParalelas=null, calExtremos=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
+let calOrden=null, calOrdenCorrecto=[], calOrdenUser=[], calOrdenBaraja=[];
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1508,19 +1509,20 @@ function calComprobarLocaliza(cod,nom){
 
 // ===== FASE 3 — ENLACES (cruces y paralelas) =====
 async function calCargarEnlaces(){
-  if(calCruces && calParalelas && calExtremos) return;
+  if(calCruces && calParalelas && calExtremos && calOrden) return;
   try{
-    const [rc,rp,re]=await Promise.all([fetch('callejero/data/cal_cruces.json'), fetch('callejero/data/cal_paralelas.json'), fetch('callejero/data/cal_extremos.json')]);
-    const cruces=await rc.json(), pares=await rp.json(), extr=await re.json();
+    const [rc,rp,re,ro]=await Promise.all([fetch('callejero/data/cal_cruces.json'), fetch('callejero/data/cal_paralelas.json'), fetch('callejero/data/cal_extremos.json'), fetch('callejero/data/cal_orden.json')]);
+    const cruces=await rc.json(), pares=await rp.json(), extr=await re.json(), ord=await ro.json();
     calCruces={}; for(const k in cruces) calCruces[Number(k)]=cruces[k];
     calParalelas={}; for(const par of pares){ const c=par[0], o=par[1]; (calParalelas[c]||(calParalelas[c]=[])).push(o); (calParalelas[o]||(calParalelas[o]=[])).push(c); }
     calExtremos={}; for(const k in extr) calExtremos[Number(k)]=extr[k];
-  }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; calExtremos=calExtremos||{}; }
+    calOrden={}; for(const k in ord) calOrden[Number(k)]=ord[k];
+  }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; calExtremos=calExtremos||{}; calOrden=calOrden||{}; }
 }
 function calEnlacesMenu(){
   calSel=null; calSel2=null; calSelY=null; calEnlaceSet=null; if(calMap) calMap.data.setStyle(calEstiloVia);
   const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
-  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceDesemboca','📍 ¿Dónde desemboca o nace…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}</div>`);
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceDesemboca','📍 ¿Dónde desemboca o nace…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}${b('calEnlaceOrden','🔢 Ordena los cruces de X')}</div>`);
 }
 // Encaja dos vías a la vez en el mapa
 function calIrDosVias(a,b){
@@ -1591,6 +1593,44 @@ window.calRespEnlace=(cod)=>{
     : `<div style="color:#f87171;font-weight:800">❌ No era ${calViaNombre[cod]||'esa'}</div><div style="font-size:13px;color:var(--text2);margin-top:4px">La correcta es <b style="color:#22c55e">${calViaNombre[calEnlaceCorrecto]||'—'}</b> (en verde en el mapa)</div>`;
   calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calEnlacePie(fn)}</div>`);
 };
+
+// Ordena los cruces de una calle (tap en secuencia)
+function _arrEq(a,b){ return a.length===b.length && a.every((x,i)=>x===b[i]); }
+window.calEnlaceOrden=()=>{
+  if(!calOrden){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Cargando datos…</div>'); return; }
+  const vs=calListaVias().filter(v=>calOrden[v.cod] && calOrden[v.cod].filter(c=>calViaNombre[c]).length>=3);
+  if(vs.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí. Prueba "Toda Málaga".</div>'); return; }
+  const via=vs[Math.floor(Math.random()*vs.length)];
+  const conNombre=calOrden[via.cod].filter(c=>calViaNombre[c]);
+  const n=Math.min(4, conNombre.length);
+  const start=Math.floor(Math.random()*(conNombre.length-n+1));
+  calOrdenCorrecto=conNombre.slice(start, start+n);
+  calOrdenBaraja=_baraja([...calOrdenCorrecto]);
+  calOrdenUser=[];
+  calEnlaceObj=via; calEnlaceActividad='orden';
+  calAsegurarVia(via.cod); calSel=via.cod; calSel2=null; calSelY=null; calMap.data.setStyle(calEstiloVia); calIrBBox(via.bbox);
+  calOrdenRender();
+};
+window.calOrdenTap=(cod)=>{ if(calOrdenUser.includes(cod)) return; calOrdenUser.push(cod); calOrdenRender(); };
+function calOrdenRender(){
+  const via=calEnlaceObj;
+  const filas=calOrdenBaraja.map(cod=>{
+    const pos=calOrdenUser.indexOf(cod);
+    if(pos>=0) return `<div style="margin:4px 0;padding:8px 11px;border-radius:10px;background:rgba(0,229,255,0.18);color:#fff;font-weight:700">${pos+1}. ${calViaNombre[cod]}</div>`;
+    return `<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calOrdenTap(${cod})">${calViaNombre[cod]}</button>`;
+  }).join('');
+  if(calOrdenUser.length < calOrdenBaraja.length){
+    calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">🔢 Ordena los cruces de <b style="color:#00e5ff">${via.n}</b> <span style="color:var(--text3)">(de un extremo al otro)</span></div>${filas}
+      <div style="margin-top:8px;display:flex;gap:8px"><button class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="calEnlaceOrden()">↻ Otra</button><button class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="calEnlacesMenu()">⬅︎ Menú</button></div></div>`);
+  } else {
+    const ok=_arrEq(calOrdenUser, calOrdenCorrecto) || _arrEq(calOrdenUser, [...calOrdenCorrecto].reverse());
+    if(ok) calAciertos++; else calFallos++;
+    const correctoTxt=calOrdenCorrecto.map((c,i)=>`${i+1}. ${calViaNombre[c]}`).join('<br>');
+    const col=ok?'rgba(34,197,94,0.5)':'rgba(248,113,113,0.5)';
+    const msg=ok?`<div style="color:#22c55e;font-weight:800">✅ ¡Orden correcto!</div>`:`<div style="color:#f87171;font-weight:800">❌ Ese no es el orden</div><div style="font-size:12px;color:var(--text2);margin-top:4px">Orden correcto:<br>${correctoTxt}</div>`;
+    calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calEnlacePie('calEnlaceOrden')}</div>`);
+  }
+}
 
 async function cargarAdmin() {
   $('admin-email').textContent = currentUser.email;
