@@ -2191,14 +2191,14 @@ body {
         <div class="badge">🔥 ACCESO ALUMNOS</div>
       </div>
       <div id="auth-error" class="auth-error"></div>
-      <div id="form-registro">
+      <div id="form-registro" style="display:none">
         <div class="form-group"><label>Nombre completo</label><input id="reg-nombre" type="text" placeholder="Tu nombre"></div>
         <div class="form-group"><label>Email</label><input id="reg-email" type="email" placeholder="tu@email.com"></div>
         <div class="form-group"><label>Contraseña (mínimo 6)</label><input id="reg-pass" type="password" placeholder="••••••••"></div>
         <button class="btn-gold" onclick="registrarse()">Crear cuenta</button>
         <p class="auth-toggle">¿Ya tienes cuenta? <a onclick="toggleAuthForm()">Inicia sesión</a></p>
       </div>
-      <div id="form-login" style="display:none">
+      <div id="form-login">
         <div class="form-group"><label>Email</label><input id="login-email" type="email" placeholder="tu@email.com"></div>
         <div class="form-group"><label>Contraseña</label><input id="login-pass" type="password" placeholder="••••••••"></div>
         <a class="forgot-link" onclick="recuperarPassword()">¿Olvidaste tu contraseña?</a>
