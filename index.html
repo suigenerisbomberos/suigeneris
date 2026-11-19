@@ -1051,7 +1051,7 @@ let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
 let calSel2=null, calSelY=null, calCruces=null, calParalelas=null, calExtremos=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
 let calOrden=null, calOrdenCorrecto=[], calOrdenUser=[], calOrdenBaraja=[];
 let calOrdenMarkers=[], calOrdenSet=new Set();
-let calNombres=false, calLabelMarkers=[];
+let calNombres=false, calLabelOverlay=null;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1264,24 +1264,84 @@ window.calToggleNombres=()=>{
   if(b){ b.textContent = calNombres ? '🔤 Nombres ✓' : '🔤 Nombres'; b.classList.toggle('active', calNombres); }
   calRefrescarNombres();
 };
+// Puntos de etiqueta (ancla + ángulo) a lo largo de una vía. En calles largas
+// el nombre se repite cada ~350 m para que no se pierda.
+function _calLabelPuntos(cod){
+  const f=calFeatIndex[cod]; if(!f) return [];
+  const STEP=350, RAD=Math.PI/180, puntos=[];
+  for(const line of f.geometry.coordinates){
+    if(line.length<2) continue;
+    let acc=0, nextAt=STEP*0.5;
+    for(let i=0;i<line.length-1;i++){
+      const a=line[i], b=line[i+1];
+      const latm=(a[1]+b[1])/2;
+      const dxm=(b[0]-a[0])*111320*Math.cos(latm*RAD), dym=(b[1]-a[1])*111320;
+      const segLen=Math.hypot(dxm,dym);
+      let ang=Math.atan2(-dym,dxm)*180/Math.PI; if(ang>90)ang-=180; if(ang<-90)ang+=180;
+      while(segLen>0 && nextAt<=acc+segLen){
+        const t=(nextAt-acc)/segLen;
+        puntos.push({lat:a[1]+(b[1]-a[1])*t, lng:a[0]+(b[0]-a[0])*t, ang});
+        nextAt+=STEP;
+      }
+      acc+=segLen;
+    }
+    if(!puntos.length){ // calle cortísima: un punto en el medio
+      const a=line[0], b=line[line.length-1];
+      let ang=Math.atan2(-(b[1]-a[1]),(b[0]-a[0])*Math.cos(a[1]*RAD))*180/Math.PI;
+      if(ang>90)ang-=180; if(ang<-90)ang+=180;
+      puntos.push({lat:(a[1]+b[1])/2, lng:(a[0]+b[0])/2, ang});
+    }
+  }
+  return puntos;
+}
+// Capa propia que dibuja los nombres girados a lo largo de cada calle
+function calCrearOverlayNombres(){
+  if(calLabelOverlay || !calMap) return;
+  calLabelOverlay=new google.maps.OverlayView();
+  calLabelOverlay._labels=[];
+  calLabelOverlay.onAdd=function(){
+    const d=document.createElement('div');
+    d.style.cssText='position:absolute;top:0;left:0;pointer-events:none';
+    this._div=d; this.getPanes().overlayLayer.appendChild(d);
+  };
+  calLabelOverlay.draw=function(){
+    const proj=this.getProjection(); if(!proj||!this._div) return;
+    this._div.innerHTML='';
+    for(const L of this._labels){
+      const p=proj.fromLatLngToDivPixel(new google.maps.LatLng(L.lat,L.lng)); if(!p) continue;
+      const s=document.createElement('div');
+      s.textContent=L.text;
+      s.style.cssText='position:absolute;left:'+p.x+'px;top:'+p.y+'px;white-space:nowrap;'
+        +'transform:translate(-50%,-50%) rotate('+L.ang+'deg);'
+        +"font:700 11px 'Outfit',sans-serif;color:#0b1b36;"
+        +'text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 3px #fff;';
+      this._div.appendChild(s);
+    }
+  };
+  calLabelOverlay.onRemove=function(){ if(this._div&&this._div.parentNode) this._div.parentNode.removeChild(this._div); this._div=null; };
+  calLabelOverlay.setMap(calMap);
+}
 function calRefrescarNombres(){
-  calLabelMarkers.forEach(m=>m.setMap(null)); calLabelMarkers=[];
-  if(!calNombres || !calMap) return;
-  if(calMap.getZoom() < 15) return; // se muestran al acercar
+  calCrearOverlayNombres();
+  if(!calLabelOverlay) return;
+  if(!calNombres || !calMap || calMap.getZoom() < 15){ calLabelOverlay._labels=[]; if(calLabelOverlay.draw) calLabelOverlay.draw(); return; }
   const bnd=calMap.getBounds(); if(!bnd) return;
   const ne=bnd.getNorthEast(), sw=bnd.getSouthWest();
   const N=ne.lat(), E=ne.lng(), S=sw.lat(), W=sw.lng();
-  const icono={ url:'data:image/svg+xml;charset=UTF-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'), scaledSize:new google.maps.Size(1,1) };
-  let n=0;
+  const labels=[]; let n=0;
   for(const cod of calEnMapa){
-    const bb=calBBoxIndex[cod]; if(!bb) continue;
-    const clat=(bb[0]+bb[2])/2, clng=(bb[1]+bb[3])/2;
-    if(clat<S||clat>N||clng<W||clng>E) continue;
     const nombre=calViaNombre[cod]; if(!nombre) continue;
-    calLabelMarkers.push(new google.maps.Marker({ position:{lat:clat,lng:clng}, map:calMap, clickable:false,
-      icon:icono, label:{text:nombre, fontSize:'11px', fontWeight:'700', color:'#0b1b36'} }));
-    if(++n>=90) break;
+    const bb=calBBoxIndex[cod]; if(!bb) continue;
+    if(bb[0]>N||bb[2]<S||bb[1]>E||bb[3]<W) continue; // la calle no se ve
+    for(const pt of _calLabelPuntos(cod)){
+      if(pt.lat<S||pt.lat>N||pt.lng<W||pt.lng>E) continue; // ese trozo no se ve
+      labels.push({lat:pt.lat, lng:pt.lng, ang:pt.ang, text:nombre});
+      if(++n>=160) break;
+    }
+    if(n>=160) break;
   }
+  calLabelOverlay._labels=labels;
+  if(calLabelOverlay.draw) calLabelOverlay.draw();
 }
 
 // Buscador de calle (acento-insensible, usa _norm del admin)
