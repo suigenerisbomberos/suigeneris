@@ -1114,7 +1114,7 @@ function calTolerancia(latLng){
 
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
-  if(calSel===cod) return {strokeColor:'#ffffff', strokeWeight:5, strokeOpacity:1, zIndex:20};
+  if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20};
   // Si hay un distrito elegido, las demás calles se apagan para que destaque
   if(calDistrito && feature.getProperty('d')!==calDistrito)
     return {strokeColor:'#64748b', strokeWeight:1, strokeOpacity:0.12, zIndex:0};
@@ -1130,7 +1130,7 @@ window.calSetModo=(m)=>{
   const barra=$('cal-barra-info'); calSetInfo('');
   if(m==='estudiar'){ if(barra) barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; }
   else if(m==='localiza'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
-  else if(m==='quevia'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='❓ <b>¿Qué vía es?</b>: resalto una calle en blanco y eliges entre 4.'; calQueVia(); }
+  else if(m==='quevia'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='❓ <b>¿Qué vía es?</b>: resalto una calle en cian y eliges entre 4.'; calQueVia(); }
 };
 
 // Clic directo sobre una calle (feature de Google)
@@ -1182,7 +1182,7 @@ function calQueVia(){
   const otras=_baraja(vs.filter(v=>v.cod!==calObjetivo.cod)).slice(0,3);
   const ops=_baraja([calObjetivo, ...otras]);
   const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespQueVia(${o.cod})">${o.n}</button>`).join('');
-  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué vía es la resaltada en blanco?</div>${bot}<div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div></div>`);
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué vía es la resaltada en cian?</div>${bot}<div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div></div>`);
 }
 window.calRespQueVia=(cod)=>{
   if(!calObjetivo) return;
