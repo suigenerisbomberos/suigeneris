@@ -1006,6 +1006,7 @@ window.renderCallejero = () => {
             <button class="cal-modo-btn active" data-m="estudiar" onclick="calSetModo('estudiar')">📖 Estudiar</button>
             <button class="cal-modo-btn" data-m="localiza" onclick="calSetModo('localiza')">🎯 Localiza</button>
             <button class="cal-modo-btn" data-m="quevia" onclick="calSetModo('quevia')">❓ ¿Qué vía es?</button>
+            <button class="cal-modo-btn" data-m="barrios" onclick="calSetModo('barrios')">🏘️ Barrios</button>
           </div>
           <select id="cal-distrito" class="cal-sel" onchange="calSetDistrito(this.value)"><option value="">🏙️ Toda Málaga</option></select>
           <input id="cal-buscar" class="cal-sel" placeholder="🔎 Buscar calle…" oninput="calBuscar(this.value)" style="min-width:150px">
@@ -1026,6 +1027,7 @@ const CAL_SINLAB=[{featureType:'all',elementType:'labels',stylers:[{visibility:'
 const CAL_PALETA=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7'];
 let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, calCargando=false;
 let calDistrito=null, calDistritos=[], calInfoBox=null;
+let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){ if(calInfoBox) calInfoBox.innerHTML = html || ''; }
 
@@ -1114,6 +1116,8 @@ function calTolerancia(latLng){
 
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
+  // En modo Barrios las calles se atenúan para que destaquen las zonas
+  if(calModo==='barrios') return {strokeColor:'#ff7d33', strokeWeight:1, strokeOpacity:0.22, zIndex:1};
   if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20};
   // Si hay un distrito elegido, las demás calles se apagan para que destaque
   if(calDistrito && feature.getProperty('d')!==calDistrito)
@@ -1123,14 +1127,22 @@ function calEstiloVia(feature){
   return {strokeColor:'#ff7d33', strokeWeight:3, strokeOpacity:0.75, zIndex:1};
 }
 
-window.calSetModo=(m)=>{
+window.calSetModo=async (m)=>{
   calModo=m; calSel=null;
   document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
   if(calMap) calMap.data.setStyle(calEstiloVia);
+  // Capa de barrios: visible solo en modo Barrios
+  if(m==='barrios'){ await calCargarBarrios(); if(calBarriosLayer) calBarriosLayer.setMap(calMap); }
+  else if(calBarriosLayer){ calBarriosLayer.setMap(null); }
   const barra=$('cal-barra-info'); calSetInfo('');
   if(m==='estudiar'){ if(barra) barra.innerHTML='📖 <b>Estudiar</b>: toca una calle en el mapa para ver su nombre y ponerle color.'; }
   else if(m==='localiza'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='🎯 <b>Localiza</b>: te digo una calle y la tocas en el mapa.'; calNuevaLocaliza(); }
   else if(m==='quevia'){ calAciertos=0; calFallos=0; if(barra) barra.innerHTML='❓ <b>¿Qué vía es?</b>: resalto una calle en cian y eliges entre 4.'; calQueVia(); }
+  else if(m==='barrios'){ calAciertos=0; calFallos=0; calBarrioSel=null; calBarrioObj=null; calBarrioQuiz=false;
+    if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
+    if(barra) barra.innerHTML='🏘️ <b>Barrios</b>: toca un barrio para ver su nombre, o pulsa "Pregúntame".';
+    calSetInfo('<div class="cal-ficha"><div style="font-size:13px;color:var(--text2)">Toca un barrio en el mapa…</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calBarrioPregunta()">❓ Pregúntame un barrio</button></div>');
+  }
 };
 
 // Clic directo sobre una calle (feature de Google)
@@ -1193,6 +1205,56 @@ window.calRespQueVia=(cod)=>{
   calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}<button class="btn-sm btn-primary" style="margin-top:10px" onclick="calQueVia()">Siguiente →</button></div>`);
 };
 window.calQueVia=calQueVia;
+
+// ===== FASE 2 — BARRIOS =====
+async function calCargarBarrios(){
+  if(calBarriosCargado) return;
+  if(!calBarriosLayer) calBarriosLayer=new google.maps.Data();
+  try{
+    const r=await fetch('callejero/data/cal_barrios.geojson'); const gj=await r.json();
+    calBarriosLayer.addGeoJson(gj);
+    calBarrios=gj.features.map(f=>({num:f.properties.num, n:f.properties.n}));
+    calBarriosLayer.setStyle(calBarrioStyle);
+    calBarriosLayer.addListener('click', calClickBarrio);
+    calBarriosCargado=true;
+  }catch(e){ console.warn('barrios callejero', e); }
+}
+function calBarrioStyle(feature){
+  const num=feature.getProperty('num');
+  if(calBarrioSel===num) return {fillColor:'#00e5ff', fillOpacity:0.5, strokeColor:'#00bcd4', strokeWeight:2, zIndex:5};
+  return {fillColor:'#D4500A', fillOpacity:0.12, strokeColor:'#ff7d33', strokeWeight:1, zIndex:3};
+}
+function calClickBarrio(ev){
+  const num=ev.feature.getProperty('num'), n=ev.feature.getProperty('n');
+  // Tocar un barrio siempre muestra su nombre (estudiar)
+  calBarrioQuiz=false; calBarrioObj=null; calBarrioSel=num; calBarriosLayer.setStyle(calBarrioStyle);
+  calSetInfo(`<div class="cal-ficha"><div class="cal-ficha-nom">🏘️ ${n}</div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calBarrioPregunta()">❓ Pregúntame un barrio</button></div>`);
+}
+function calFitBarrio(num){
+  let target=null; calBarriosLayer.forEach(ft=>{ if(ft.getProperty('num')===num) target=ft; });
+  if(!target) return;
+  const b=new google.maps.LatLngBounds();
+  target.getGeometry().forEachLatLng(ll=>b.extend(ll));
+  calMap.fitBounds(b);
+}
+window.calBarrioPregunta=()=>{
+  if(calBarrios.length<4) return;
+  calBarrioQuiz=true;
+  calBarrioObj=calBarrios[Math.floor(Math.random()*calBarrios.length)];
+  calBarrioSel=calBarrioObj.num; calBarriosLayer.setStyle(calBarrioStyle); calFitBarrio(calBarrioObj.num);
+  const otras=_baraja(calBarrios.filter(b=>b.num!==calBarrioObj.num)).slice(0,3);
+  const ops=_baraja([calBarrioObj, ...otras]);
+  const bot=ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calBarrioResp(${o.num})">${o.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué barrio es el resaltado en cian?</div>${bot}<div style="font-size:12px;color:var(--text3);margin-top:6px">✅ ${calAciertos} · ❌ ${calFallos}</div></div>`);
+};
+window.calBarrioResp=(num)=>{
+  if(!calBarrioObj) return;
+  const bien = num===calBarrioObj.num;
+  if(bien) calAciertos++; else calFallos++;
+  const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
+  const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calBarrioObj.n}</div>` : `<div style="color:#f87171;font-weight:800">❌ Era: <b>${calBarrioObj.n}</b></div>`;
+  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}<button class="btn-sm btn-primary" style="margin-top:10px" onclick="calBarrioPregunta()">Siguiente →</button></div>`);
+};
 
 function calInfoEstudiar(cod, nom){
   const chips=CAL_PALETA.map(c=>`<button onclick="calPonColor(${cod},'${c}')" style="width:30px;height:30px;border-radius:50%;border:2px solid #fff;background:${c};cursor:pointer" title="Poner este color"></button>`).join('');
