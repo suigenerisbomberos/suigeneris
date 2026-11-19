@@ -1334,7 +1334,11 @@ function calRefrescarNombres(){
   const bnd=calMap.getBounds(); if(!bnd) return;
   const ne=bnd.getNorthEast(), sw=bnd.getSouthWest();
   const N=ne.lat(), E=ne.lng(), S=sw.lat(), W=sw.lng();
-  const labels=[], placed=[]; let n=0; const RAD=Math.PI/180, MINSEP=75;
+  const labels=[], placed=[]; let n=0; const RAD=Math.PI/180;
+  // Separación mínima entre nombres SEGÚN el zoom (~52 px): al acercar se permite
+  // mucho más juntos, así aparecen casi todas las calles.
+  const mpp=156543.03392*Math.cos(((N+S)/2)*RAD)/Math.pow(2, calMap.getZoom());
+  const MINSEP=Math.max(10, 52*mpp);
   for(const cod of calEnMapa){
     const nombre=calViaNombre[cod]; if(!nombre) continue;
     const bb=calBBoxIndex[cod]; if(!bb) continue;
