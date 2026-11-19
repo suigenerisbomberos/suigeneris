@@ -1040,7 +1040,7 @@ let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
 let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
-let calSel2=null, calSelY=null, calCruces=null, calParalelas=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
+let calSel2=null, calSelY=null, calCruces=null, calParalelas=null, calExtremos=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce', calEnlaceCorrecto=null;
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1508,18 +1508,19 @@ function calComprobarLocaliza(cod,nom){
 
 // ===== FASE 3 — ENLACES (cruces y paralelas) =====
 async function calCargarEnlaces(){
-  if(calCruces && calParalelas) return;
+  if(calCruces && calParalelas && calExtremos) return;
   try{
-    const [rc,rp]=await Promise.all([fetch('callejero/data/cal_cruces.json'), fetch('callejero/data/cal_paralelas.json')]);
-    const cruces=await rc.json(), pares=await rp.json();
+    const [rc,rp,re]=await Promise.all([fetch('callejero/data/cal_cruces.json'), fetch('callejero/data/cal_paralelas.json'), fetch('callejero/data/cal_extremos.json')]);
+    const cruces=await rc.json(), pares=await rp.json(), extr=await re.json();
     calCruces={}; for(const k in cruces) calCruces[Number(k)]=cruces[k];
     calParalelas={}; for(const par of pares){ const c=par[0], o=par[1]; (calParalelas[c]||(calParalelas[c]=[])).push(o); (calParalelas[o]||(calParalelas[o]=[])).push(c); }
-  }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; }
+    calExtremos={}; for(const k in extr) calExtremos[Number(k)]=extr[k];
+  }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; calExtremos=calExtremos||{}; }
 }
 function calEnlacesMenu(){
   calSel=null; calSel2=null; calSelY=null; calEnlaceSet=null; if(calMap) calMap.data.setStyle(calEstiloVia);
   const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
-  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}</div>`);
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}${b('calEnlaceDesemboca','📍 ¿Dónde desemboca o nace…?')}${b('calEnlaceUne','🔗 ¿Qué vía une X con Y?')}</div>`);
 }
 // Encaja dos vías a la vez en el mapa
 function calIrDosVias(a,b){
@@ -1537,7 +1538,7 @@ function _calEnlacePie(fn){
     <span style="font-size:12px;color:var(--text3);margin-left:auto">✅ ${calAciertos} · ❌ ${calFallos}</span></div>`;
 }
 function _calEnlaceQuiz(tipo){
-  const mapa = tipo==='cruce' ? calCruces : calParalelas;
+  const mapa = {cruce:calCruces, paralela:calParalelas, desemboca:calExtremos}[tipo];
   if(!mapa){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Cargando datos…</div>'); return; }
   const vs = calListaVias().filter(v=>mapa[v.cod] && mapa[v.cod].length);
   if(vs.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí. Prueba "Toda Málaga".</div>'); return; }
@@ -1550,13 +1551,14 @@ function _calEnlaceQuiz(tipo){
   const otras = _baraja(fuera).slice(0,3).map(v=>({cod:v.cod, n:v.n}));
   const ops = _baraja([{cod:correctoCod, n:calViaNombre[correctoCod]||'?'}, ...otras]);
   calAsegurarVia(via.cod); calSel=via.cod; calSel2=null; calMap.data.setStyle(calEstiloVia); calIrBBox(via.bbox);
-  const verbo = tipo==='cruce' ? 'cruza con' : 'es paralela a';
-  const fn = tipo==='cruce' ? 'calEnlaceCruce' : 'calEnlaceParalela';
+  const verbo = {cruce:'cruza con', paralela:'es paralela a', desemboca:'desemboca o nace en'}[tipo];
+  const fn = {cruce:'calEnlaceCruce', paralela:'calEnlaceParalela', desemboca:'calEnlaceDesemboca'}[tipo];
   const bot = ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespEnlace(${o.cod})">${o.n}</button>`).join('');
   calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué calle <b>${verbo}</b> <b style="color:#00e5ff">${via.n}</b>?</div>${bot}${_calEnlacePie(fn)}</div>`);
 }
 window.calEnlaceCruce=()=>_calEnlaceQuiz('cruce');
 window.calEnlaceParalela=()=>_calEnlaceQuiz('paralela');
+window.calEnlaceDesemboca=()=>_calEnlaceQuiz('desemboca');
 window.calEnlaceUne=()=>{
   if(!calCruces){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Cargando datos…</div>'); return; }
   const conect = calListaVias().filter(v=>calCruces[v.cod] && calCruces[v.cod].filter(c=>calViaNombre[c]).length>=2);
@@ -1582,7 +1584,7 @@ window.calRespEnlace=(cod)=>{
   if(bien){ calAciertos++; calAsegurarVia(cod); calSel2=cod; }
   else { calFallos++; if(calEnlaceCorrecto!=null){ calAsegurarVia(calEnlaceCorrecto); calSel2=calEnlaceCorrecto; } }
   calMap.data.setStyle(calEstiloVia);
-  const fn = {cruce:'calEnlaceCruce', paralela:'calEnlaceParalela', une:'calEnlaceUne'}[calEnlaceActividad] || 'calEnlacesMenu';
+  const fn = {cruce:'calEnlaceCruce', paralela:'calEnlaceParalela', une:'calEnlaceUne', desemboca:'calEnlaceDesemboca'}[calEnlaceActividad] || 'calEnlacesMenu';
   const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
   const msg = bien
     ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>`
