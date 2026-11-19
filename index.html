@@ -1018,6 +1018,7 @@ window.renderCallejero = () => {
           <select id="cal-distrito" class="cal-sel" onchange="calSetDistrito(this.value)"><option value="">🏙️ Toda Málaga</option></select>
           <input id="cal-buscar" class="cal-sel" placeholder="🔎 Buscar calle…" oninput="calBuscar(this.value)" style="min-width:150px">
           <button class="cal-modo-btn" onclick="calIrTodaMalaga()" title="Ver toda Málaga">🗺️</button>
+          <button class="cal-modo-btn" id="cal-mudo-btn" onclick="calToggleMudo()" title="Mostrar u ocultar los nombres del mapa">🔊 Ver nombres</button>
           ${isAdmin?'<span class="cal-admin-nota">👁️ Vista admin · módulo en obras</span>':''}
         </div>
         <div id="cal-barra-info" class="cal-barra-info"></div>
@@ -1035,7 +1036,7 @@ const CAL_MAPS_KEY='AIzaSyD4iLfl5RRP8BNpoIWplY5AyC-MsWZuD7w';
 const CAL_CENTRO={lat:36.7213,lng:-4.4214};
 const CAL_SINLAB=[{featureType:'all',elementType:'labels',stylers:[{visibility:'off'}]}];
 const CAL_PALETA=['#ef4444','#f59e0b','#22c55e','#3b82f6','#a855f7'];
-let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, calCargando=false;
+let calMap=null, calModo='estudiar', calSel=null, calColores={}, calObjetivo=null, calAciertos=0, calFallos=0, _calMapsP=null, calCargando=false, calMudo=true;
 let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
@@ -1246,6 +1247,12 @@ function calFit(bounds, maxZoom){
 // Centrar el mapa en una vía (sin pegarse demasiado)
 function calIrBBox(b){ if(b) calFit({south:b[0], west:b[1], north:b[2], east:b[3]}, 16); }
 window.calIrTodaMalaga=()=>{ calMap.setCenter(CAL_CENTRO); calMap.setZoom(13); };
+// Alterna entre mapa MUDO (sin nombres) y mapa con los nombres de Google
+window.calToggleMudo=()=>{
+  calMudo=!calMudo;
+  if(calMap) calMap.setOptions({styles: calMudo ? CAL_SINLAB : []});
+  const b=$('cal-mudo-btn'); if(b) b.textContent = calMudo ? '🔊 Ver nombres' : '🔇 Mapa mudo';
+};
 
 // Buscador de calle (acento-insensible, usa _norm del admin)
 window.calBuscar=(q)=>{
