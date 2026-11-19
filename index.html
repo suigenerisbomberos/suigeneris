@@ -1013,6 +1013,7 @@ window.renderCallejero = () => {
             <button class="cal-modo-btn" data-m="localiza" onclick="calSetModo('localiza')">🎯 Localiza</button>
             <button class="cal-modo-btn" data-m="quevia" onclick="calSetModo('quevia')">❓ ¿Qué vía es?</button>
             <button class="cal-modo-btn" data-m="barrios" onclick="calSetModo('barrios')">🏘️ Barrios</button>
+            <button class="cal-modo-btn" data-m="enlaces" onclick="calSetModo('enlaces')">🔗 Enlaces</button>
           </div>
           <select id="cal-distrito" class="cal-sel" onchange="calSetDistrito(this.value)"><option value="">🏙️ Toda Málaga</option></select>
           <input id="cal-buscar" class="cal-sel" placeholder="🔎 Buscar calle…" oninput="calBuscar(this.value)" style="min-width:150px">
@@ -1039,6 +1040,7 @@ let calDistrito=null, calDistritos=[], calInfoBox=null, calInfoHtml='';
 let calBarriosLayer=null, calBarriosCargado=false, calBarrios=[], calBarrioSel=null, calBarrioObj=null, calBarrioQuiz=false;
 let calViaNombre={}, calBarrioNombre={}, calViaBarrio=null, calBarrioVias=null, calBarrioRespSet=null, calZoomT=null;
 let calBBoxIndex={}, calFeatIndex={}, calEnMapa=new Set();
+let calSel2=null, calCruces=null, calParalelas=null, calEnlaceSet=null, calEnlaceObj=null, calEnlaceActividad='cruce';
 // Escribe el cartel de info DENTRO del mapa (visible también a pantalla completa)
 function calSetInfo(html){
   calInfoHtml = html || '';
@@ -1146,7 +1148,7 @@ function calActualizarVista(){
   }
   if(nuevos.length){ calMap.data.addGeoJson({type:'FeatureCollection', features:nuevos}); nuevos.forEach(f=>calEnMapa.add(f.properties.cod)); }
   const quitar=[];
-  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && !calColores[c]) quitar.push(ft); });
+  calMap.data.forEach(ft=>{ const c=ft.getProperty('cod'); if(c!=null && !quiero.has(c) && c!==calSel && c!==calSel2 && !calColores[c]) quitar.push(ft); });
   for(const ft of quitar){ calMap.data.remove(ft); calEnMapa.delete(ft.getProperty('cod')); }
 }
 // Asegura que una calle concreta esté dibujada (para resaltarla aunque esté fuera de vista)
@@ -1180,6 +1182,7 @@ function calTolerancia(latLng){
 function calEstiloVia(feature){
   const cod=feature.getProperty('cod');
   if(calSel===cod) return {strokeColor:'#00e5ff', strokeWeight:7, strokeOpacity:1, zIndex:20, visible:true};
+  if(calSel2===cod) return {strokeColor:'#f59e0b', strokeWeight:6, strokeOpacity:1, zIndex:19, visible:true};
   const col=calColores[cod];
   if(col) return {strokeColor:col, strokeWeight:4, strokeOpacity:0.95, zIndex:10, visible:true};
   // En modo Barrios las calles se atenúan para que destaquen las zonas
@@ -1191,7 +1194,7 @@ function calEstiloVia(feature){
 }
 
 window.calSetModo=async (m)=>{
-  calModo=m; calSel=null;
+  calModo=m; calSel=null; calSel2=null;
   document.querySelectorAll('.cal-modo-btn').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
   if(calMap) calMap.data.setStyle(calEstiloVia);
   // Capa de barrios: visible solo en modo Barrios
@@ -1205,6 +1208,10 @@ window.calSetModo=async (m)=>{
     if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
     if(barra) barra.innerHTML='🏘️ <b>Barrios</b>: toca un barrio para ver su nombre, o elige una actividad.';
     calBarriosMenu();
+  }
+  else if(m==='enlaces'){ calAciertos=0; calFallos=0;
+    if(barra) barra.innerHTML='🔗 <b>Enlaces</b>: cruces y paralelas entre calles.';
+    await calCargarEnlaces(); calEnlacesMenu();
   }
 };
 
@@ -1498,6 +1505,60 @@ function calComprobarLocaliza(cod,nom){
     calSetInfo(`<div class="cal-ficha" style="border-color:rgba(248,113,113,0.5)"><div style="color:#f87171;font-weight:800">❌ Esa es ${nom}</div><div style="font-size:13px;color:var(--text2);margin-top:4px">Buscabas: <b>${calObjetivo.n}</b></div><button class="btn-sm btn-primary" style="margin-top:10px" onclick="calNuevaLocaliza()">Otra →</button></div>`);
   }
 }
+
+// ===== FASE 3 — ENLACES (cruces y paralelas) =====
+async function calCargarEnlaces(){
+  if(calCruces && calParalelas) return;
+  try{
+    const [rc,rp]=await Promise.all([fetch('callejero/data/cal_cruces.json'), fetch('callejero/data/cal_paralelas.json')]);
+    const cruces=await rc.json(), pares=await rp.json();
+    calCruces={}; for(const k in cruces) calCruces[Number(k)]=cruces[k];
+    calParalelas={}; for(const par of pares){ const c=par[0], o=par[1]; (calParalelas[c]||(calParalelas[c]=[])).push(o); (calParalelas[o]||(calParalelas[o]=[])).push(c); }
+  }catch(e){ console.warn('enlaces callejero', e); calCruces=calCruces||{}; calParalelas=calParalelas||{}; }
+}
+function calEnlacesMenu(){
+  calSel=null; calSel2=null; calEnlaceSet=null; if(calMap) calMap.data.setStyle(calEstiloVia);
+  const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:6px">Elige una actividad:</div>${b('calEnlaceCruce','✖️ ¿Qué calle cruza con…?')}${b('calEnlaceParalela','🔀 ¿Qué calle es paralela a…?')}</div>`);
+}
+window.calEnlacesMenu=calEnlacesMenu;
+function _calEnlacePie(fn){
+  return `<div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+    <button class="btn-sm btn-primary" onclick="${fn}()">Siguiente →</button>
+    <button class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="calEnlacesMenu()">⬅︎ Menú</button>
+    <span style="font-size:12px;color:var(--text3);margin-left:auto">✅ ${calAciertos} · ❌ ${calFallos}</span></div>`;
+}
+function _calEnlaceQuiz(tipo){
+  const mapa = tipo==='cruce' ? calCruces : calParalelas;
+  if(!mapa){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Cargando datos…</div>'); return; }
+  const vs = calListaVias().filter(v=>mapa[v.cod] && mapa[v.cod].length);
+  if(vs.length<1){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">No hay datos suficientes aquí. Prueba "Toda Málaga".</div>'); return; }
+  const via = vs[Math.floor(Math.random()*vs.length)];
+  calEnlaceObj = via; calEnlaceActividad = tipo;
+  const correctos = new Set(mapa[via.cod]); calEnlaceSet = correctos;
+  const correctoCod = mapa[via.cod][Math.floor(Math.random()*mapa[via.cod].length)];
+  const fuera = calListaVias().filter(v=>v.cod!==via.cod && !correctos.has(v.cod));
+  const otras = _baraja(fuera).slice(0,3).map(v=>({cod:v.cod, n:v.n}));
+  const ops = _baraja([{cod:correctoCod, n:calViaNombre[correctoCod]||'?'}, ...otras]);
+  calAsegurarVia(via.cod); calSel=via.cod; calSel2=null; calMap.data.setStyle(calEstiloVia); calIrBBox(via.bbox);
+  const verbo = tipo==='cruce' ? 'cruza con' : 'es paralela a';
+  const fn = tipo==='cruce' ? 'calEnlaceCruce' : 'calEnlaceParalela';
+  const bot = ops.map(o=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calRespEnlace(${o.cod})">${o.n}</button>`).join('');
+  calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué calle <b>${verbo}</b> <b style="color:#00e5ff">${via.n}</b>?</div>${bot}${_calEnlacePie(fn)}</div>`);
+}
+window.calEnlaceCruce=()=>_calEnlaceQuiz('cruce');
+window.calEnlaceParalela=()=>_calEnlaceQuiz('paralela');
+window.calRespEnlace=(cod)=>{
+  if(!calEnlaceSet) return;
+  const bien = calEnlaceSet.has(cod);
+  if(bien){ calAciertos++; calAsegurarVia(cod); calSel2=cod; }
+  else { calFallos++; const algun=[...calEnlaceSet][0]; if(algun){ calAsegurarVia(algun); calSel2=algun; } }
+  calMap.data.setStyle(calEstiloVia);
+  const fn = calEnlaceActividad==='cruce' ? 'calEnlaceCruce' : 'calEnlaceParalela';
+  const col = bien ? 'rgba(34,197,94,0.5)' : 'rgba(248,113,113,0.5)';
+  const msg = bien ? `<div style="color:#22c55e;font-weight:800">✅ ¡Correcto! ${calViaNombre[cod]||''}</div>` : `<div style="color:#f87171;font-weight:800">❌ ${calViaNombre[cod]||'Esa'} no. La correcta está en ámbar.</div>`;
+  calSetInfo(`<div class="cal-ficha" style="border-color:${col}">${msg}${_calEnlacePie(fn)}</div>`);
+};
 
 async function cargarAdmin() {
   $('admin-email').textContent = currentUser.email;
