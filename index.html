@@ -1232,7 +1232,7 @@ window.calSetModo=async (m)=>{
   }
   else if(m==='puntos'){ calAciertos=0; calFallos=0;
     if(barra) barra.innerHTML='📍 <b>Puntos de interés</b>: monumentos, mercados, colegios, consulados…';
-    await calCargarPuntos(); calCrearMarcadoresPuntos(); calMostrarPuntos(true); calPuntosMenu();
+    await calCargarPuntos(); if(!calPuntoCats && calPuntos) calPuntoCats=new Set(calPuntos.map(p=>p.cat)); calCrearMarcadoresPuntos(); calMostrarPuntos(true); calPuntosMenu();
   }
 };
 
@@ -1775,36 +1775,49 @@ const CAL_CATS={
   consulados:{l:'Consulados', c:'#1e3a8a'},
   bibliotecas:{l:'Bibliotecas', c:'#e11d48'}
 };
-let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='';
+let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='', calPuntoCats=null;
+function calPuntosActivos(){ return calPuntos ? calPuntos.filter(p=>!calPuntoCats || calPuntoCats.has(p.cat)) : []; }
 async function calCargarPuntos(){ if(calPuntos) return; try{ const r=await fetch('callejero/data/cal_puntos.json'); calPuntos=await r.json(); }catch(e){ calPuntos=[]; } }
 function _puntoIcon(cat,sel){ const c=(CAL_CATS[cat]||{}).c||'#888'; return {path:google.maps.SymbolPath.CIRCLE, scale:sel?10:6, fillColor:c, fillOpacity:1, strokeColor:sel?'#00e5ff':'#ffffff', strokeWeight:sel?4:1.5}; }
 function calCrearMarcadoresPuntos(){ if(calPuntosMarkers.length||!calPuntos) return; calPuntos.forEach((p,i)=>{ const m=new google.maps.Marker({position:{lat:p.lat,lng:p.lng}, icon:_puntoIcon(p.cat,false), title:p.n}); m.addListener('click',()=>calPuntoClick(i)); calPuntosMarkers.push(m); }); }
-function calMostrarPuntos(ver){ calPuntosMarkers.forEach(m=>m.setMap(ver?calMap:null)); }
+function calMostrarPuntos(ver){ calPuntosMarkers.forEach((m,i)=>{ const on=ver && (!calPuntoCats || calPuntoCats.has(calPuntos[i].cat)); m.setMap(on?calMap:null); }); }
+function _puntoChips(){
+  const cats=[...new Set(calPuntos.map(p=>p.cat))];
+  const chip=(cat)=>{ const x=CAL_CATS[cat]||{l:cat,c:'#888'}; const on=!calPuntoCats||calPuntoCats.has(cat);
+    return `<button onclick="calTogglePuntoCat('${cat}')" style="font-size:11px;font-weight:700;border:1px solid ${x.c};border-radius:14px;padding:4px 10px;margin:3px;cursor:pointer;background:${on?x.c:'transparent'};color:${on?'#fff':x.c}">${x.l}</button>`; };
+  return '<div style="display:flex;flex-wrap:wrap;margin:4px 0">'
+    + `<button onclick="calPuntoTodos()" style="font-size:11px;font-weight:700;border:1px solid var(--border);border-radius:14px;padding:4px 10px;margin:3px;cursor:pointer;background:rgba(255,255,255,0.08);color:#cbd5e1">✓ Todos</button>`
+    + cats.map(chip).join('') + '</div>';
+}
+window.calTogglePuntoCat=(cat)=>{ if(!calPuntoCats) calPuntoCats=new Set(calPuntos.map(p=>p.cat)); if(calPuntoCats.has(cat)) calPuntoCats.delete(cat); else calPuntoCats.add(cat); calMostrarPuntos(true); calPuntosMenu(); };
+window.calPuntoTodos=()=>{ calPuntoCats=new Set(calPuntos.map(p=>p.cat)); calMostrarPuntos(true); calPuntosMenu(); };
 function _repintarPuntos(){ calPuntosMarkers.forEach((m,i)=>m.setIcon(_puntoIcon(calPuntos[i].cat, i===calPuntoSelIdx))); }
 function _puntoLeyenda(){ return '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0">'+Object.values(CAL_CATS).map(x=>`<span style="font-size:11px;color:var(--text2)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${x.c};margin-right:3px;vertical-align:middle"></span>${x.l}</span>`).join('')+'</div>'; }
-function calPuntosMenu(){ calPuntoSelIdx=-1; _repintarPuntos(); const b=(fn,t)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${t}</button>`; calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">Toca un punto para ver qué es, o elige:</div>${_puntoLeyenda()}${b('calPuntoCalle','📍 ¿En qué calle está…?')}${b('calPuntoQue','❓ ¿Qué punto es el resaltado?')}</div>`); }
+function calPuntosMenu(){ calPuntoSelIdx=-1; _repintarPuntos(); const b=(fn,t)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${t}</button>`; calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:2px">Elige qué estudiar (toca para filtrar):</div>${_puntoChips()}<div style="font-size:12px;color:var(--text3);margin:4px 0">Toca un punto del mapa para ver qué es, o:</div>${b('calPuntoCalle','📍 ¿En qué calle está…?')}${b('calPuntoQue','❓ ¿Qué punto es el resaltado?')}</div>`); }
 window.calPuntosMenu=calPuntosMenu;
 function calPuntoClick(i){ calPuntoAct='estudiar'; calPuntoSelIdx=i; _repintarPuntos(); const p=calPuntos[i]; calSetInfo(`<div class="cal-ficha"><div class="cal-ficha-nom">${p.n}</div><div style="font-size:12px;color:var(--text2);margin-top:3px">${(CAL_CATS[p.cat]||{}).l||p.cat}</div><div style="font-size:13px;margin-top:4px">📍 Está en: <b>${p.calle||'—'}</b></div><button class="btn-sm" style="margin-top:8px;background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="calPuntosMenu()">⬅︎ Menú</button></div>`); }
 function _puntoPie(fn){ return `<div style="display:flex;gap:8px;align-items:center;margin-top:10px"><button class="btn-sm btn-primary" onclick="${fn}()">Siguiente →</button><button class="btn-sm" style="background:rgba(255,255,255,0.08);color:#cbd5e1" onclick="calPuntosMenu()">⬅︎ Menú</button><span style="font-size:12px;color:var(--text3);margin-left:auto">✅ ${calAciertos} · ❌ ${calFallos}</span></div>`; }
 window.calPuntoCalle=()=>{
-  if(!calPuntos||!calPuntos.length) return;
+  const pool=calPuntosActivos();
+  if(!pool.length){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Elige al menos una categoría arriba.</div>'); return; }
   calPuntoAct='calle';
-  const i=Math.floor(Math.random()*calPuntos.length), p=calPuntos[i]; calPuntoObj=p;
-  calPuntoSelIdx=i; _repintarPuntos(); calMap.panTo({lat:p.lat,lng:p.lng}); if(calMap.getZoom()<15) calMap.setZoom(16);
+  const p=pool[Math.floor(Math.random()*pool.length)]; calPuntoObj=p;
+  calPuntoSelIdx=calPuntos.indexOf(p); _repintarPuntos(); calMap.panTo({lat:p.lat,lng:p.lng}); if(calMap.getZoom()<15) calMap.setZoom(16);
   calPuntoCorrecto=p.calle||'';
-  const pool=[...new Set(Object.values(calViaNombre))].filter(x=>x && x!==calPuntoCorrecto);
-  calPuntoOpts=_baraja([calPuntoCorrecto, ..._baraja(pool).slice(0,3)]);
+  const callePool=[...new Set(Object.values(calViaNombre))].filter(x=>x && x!==calPuntoCorrecto);
+  calPuntoOpts=_baraja([calPuntoCorrecto, ..._baraja(callePool).slice(0,3)]);
   const bot=calPuntoOpts.map((o,ix)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calPuntoResp(${ix})">${o||'—'}</button>`).join('');
   calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿En qué calle está <b style="color:#00e5ff">${p.n}</b>?</div>${bot}${_puntoPie('calPuntoCalle')}</div>`);
 };
 window.calPuntoQue=()=>{
-  if(!calPuntos||calPuntos.length<4) return;
+  const act=calPuntosActivos();
+  if(act.length<4){ calSetInfo('<div class="cal-ficha" style="font-size:13px;color:#94a3b8">Elige categorías con al menos 4 puntos en total.</div>'); return; }
   calPuntoAct='que';
-  const i=Math.floor(Math.random()*calPuntos.length), p=calPuntos[i]; calPuntoObj=p;
-  calPuntoSelIdx=i; _repintarPuntos(); calMap.panTo({lat:p.lat,lng:p.lng}); if(calMap.getZoom()<15) calMap.setZoom(16);
+  const p=act[Math.floor(Math.random()*act.length)]; calPuntoObj=p;
+  calPuntoSelIdx=calPuntos.indexOf(p); _repintarPuntos(); calMap.panTo({lat:p.lat,lng:p.lng}); if(calMap.getZoom()<15) calMap.setZoom(16);
   calPuntoCorrecto=p.n;
-  let pool=calPuntos.filter(q=>q.cat===p.cat && q.n!==p.n).map(q=>q.n);
-  if(pool.length<3) pool=calPuntos.filter(q=>q.n!==p.n).map(q=>q.n);
+  let pool=act.filter(q=>q.cat===p.cat && q.n!==p.n).map(q=>q.n);
+  if(pool.length<3) pool=act.filter(q=>q.n!==p.n).map(q=>q.n);
   calPuntoOpts=_baraja([p.n, ..._baraja([...new Set(pool)]).slice(0,3)]);
   const bot=calPuntoOpts.map((o,ix)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="calPuntoResp(${ix})">${o}</button>`).join('');
   calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:4px">¿Qué punto es el resaltado? <span style="color:var(--text3)">(${(CAL_CATS[p.cat]||{}).l||''})</span></div>${bot}${_puntoPie('calPuntoQue')}</div>`);
