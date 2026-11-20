@@ -1785,10 +1785,12 @@ function _puntoChips(){
     return `<button onclick="calTogglePuntoCat('${cat}')" style="font-size:11px;font-weight:700;border:1px solid ${x.c};border-radius:14px;padding:4px 10px;margin:3px;cursor:pointer;background:${on?x.c:'transparent'};color:${on?'#fff':x.c}">${x.l}</button>`; };
   return '<div style="display:flex;flex-wrap:wrap;margin:4px 0">'
     + `<button onclick="calPuntoTodos()" style="font-size:11px;font-weight:700;border:1px solid var(--border);border-radius:14px;padding:4px 10px;margin:3px;cursor:pointer;background:rgba(255,255,255,0.08);color:#cbd5e1">✓ Todos</button>`
+    + `<button onclick="calPuntoNinguno()" style="font-size:11px;font-weight:700;border:1px solid var(--border);border-radius:14px;padding:4px 10px;margin:3px;cursor:pointer;background:rgba(255,255,255,0.08);color:#cbd5e1">✕ Ninguno</button>`
     + cats.map(chip).join('') + '</div>';
 }
 window.calTogglePuntoCat=(cat)=>{ if(!calPuntoCats) calPuntoCats=new Set(calPuntos.map(p=>p.cat)); if(calPuntoCats.has(cat)) calPuntoCats.delete(cat); else calPuntoCats.add(cat); calMostrarPuntos(true); calPuntosMenu(); };
 window.calPuntoTodos=()=>{ calPuntoCats=new Set(calPuntos.map(p=>p.cat)); calMostrarPuntos(true); calPuntosMenu(); };
+window.calPuntoNinguno=()=>{ calPuntoCats=new Set(); calMostrarPuntos(true); calPuntosMenu(); };
 function _repintarPuntos(){ calPuntosMarkers.forEach((m,i)=>m.setIcon(_puntoIcon(calPuntos[i].cat, i===calPuntoSelIdx))); }
 function _puntoLeyenda(){ return '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0">'+Object.values(CAL_CATS).map(x=>`<span style="font-size:11px;color:var(--text2)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${x.c};margin-right:3px;vertical-align:middle"></span>${x.l}</span>`).join('')+'</div>'; }
 function calPuntosMenu(){ calPuntoSelIdx=-1; _repintarPuntos(); const b=(fn,t)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${t}</button>`; calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:2px">Elige qué estudiar (toca para filtrar):</div>${_puntoChips()}<div style="font-size:12px;color:var(--text3);margin:4px 0">Toca un punto del mapa para ver qué es, o:</div>${b('calPuntoCalle','📍 ¿En qué calle está…?')}${b('calPuntoQue','❓ ¿Qué punto es el resaltado?')}</div>`); }
