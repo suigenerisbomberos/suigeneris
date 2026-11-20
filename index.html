@@ -1771,14 +1771,15 @@ function calOrdenRender(){
 const CAL_CATS={
   monumentos:{l:'Monumentos y museos', c:'#8B5E3C'},
   mercados:{l:'Mercados', c:'#14b8a6'},
-  colegios:{l:'Colegios', c:'#f59e0b'},
+  colegios:{l:'Colegios', c:'#facc15'},
   consulados:{l:'Consulados', c:'#1e3a8a'},
   bibliotecas:{l:'Bibliotecas', c:'#e11d48'},
   teatros:{l:'Teatros y salas', c:'#d946ef'},
   servicios_publicos:{l:'Servicios públicos', c:'#0ea5e9'},
   delegaciones:{l:'Delegaciones', c:'#6366f1'},
   hoteles:{l:'Hoteles y hostales', c:'#a855f7'},
-  salud:{l:'Centros de salud', c:'#22c55e'}
+  salud:{l:'Centros de salud', c:'#22c55e'},
+  bomberos:{l:'Parques de bomberos', c:'#dc2626'}
 };
 let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='', calPuntoCats=null;
 function calPuntosActivos(){ return calPuntos ? calPuntos.filter(p=>!calPuntoCats || calPuntoCats.has(p.cat)) : []; }
