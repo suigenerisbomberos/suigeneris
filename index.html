@@ -1768,22 +1768,14 @@ function calOrdenRender(){
 }
 
 // ===== FASE 4 — PUNTOS DE INTERÉS =====
-const CAL_CATS={
-  monumentos:{l:'Monumentos y museos', c:'#8B5E3C'},
-  mercados:{l:'Mercados', c:'#14b8a6'},
-  colegios:{l:'Colegios', c:'#facc15'},
-  consulados:{l:'Consulados', c:'#1e3a8a'},
-  bibliotecas:{l:'Bibliotecas', c:'#e11d48'},
-  teatros:{l:'Teatros y salas', c:'#d946ef'},
-  servicios_publicos:{l:'Servicios públicos', c:'#0ea5e9'},
-  delegaciones:{l:'Delegaciones', c:'#6366f1'},
-  hoteles:{l:'Hoteles y hostales', c:'#a855f7'},
-  salud:{l:'Centros de salud', c:'#22c55e'},
-  bomberos:{l:'Parques de bomberos', c:'#dc2626'}
-};
+let CAL_CATS={ bomberos:{l:'Parques de bomberos', c:'#dc2626'} }; // se completa desde cal_categorias.json
 let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='', calPuntoCats=null;
 function calPuntosActivos(){ return calPuntos ? calPuntos.filter(p=>!calPuntoCats || calPuntoCats.has(p.cat)) : []; }
-async function calCargarPuntos(){ if(calPuntos) return; try{ const r=await fetch('callejero/data/cal_puntos.json'); calPuntos=await r.json(); }catch(e){ calPuntos=[]; } }
+async function calCargarPuntos(){
+  if(calPuntos) return;
+  try{ const r=await fetch('callejero/data/cal_puntos.json'); calPuntos=await r.json(); }catch(e){ calPuntos=[]; }
+  try{ const rc=await fetch('callejero/data/cal_categorias.json'); CAL_CATS=Object.assign({}, CAL_CATS, await rc.json()); }catch(e){}
+}
 function _puntoIcon(cat,sel){ const c=(CAL_CATS[cat]||{}).c||'#888'; return {path:google.maps.SymbolPath.CIRCLE, scale:sel?10:6, fillColor:c, fillOpacity:1, strokeColor:sel?'#00e5ff':'#ffffff', strokeWeight:sel?4:1.5}; }
 function calCrearMarcadoresPuntos(){ if(calPuntosMarkers.length||!calPuntos) return; calPuntos.forEach((p,i)=>{ const m=new google.maps.Marker({position:{lat:p.lat,lng:p.lng}, icon:_puntoIcon(p.cat,false), title:p.n}); m.addListener('click',()=>calPuntoClick(i)); calPuntosMarkers.push(m); }); }
 function calMostrarPuntos(ver){ calPuntosMarkers.forEach((m,i)=>{ const on=ver && (!calPuntoCats || calPuntoCats.has(calPuntos[i].cat)); m.setMap(on?calMap:null); }); }
