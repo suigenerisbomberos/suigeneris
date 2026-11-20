@@ -38,6 +38,7 @@ FUENTES=[
     ('poi_mercados','TOOLTIP','mercados'),
     ('poi_colegios','NOMBRE','colegios'),
     ('poi_consulados','TOOLTIP','consulados'),
+    ('poi_bibliotecas','NOMBRE','bibliotecas'),
 ]
 puntos=[]
 for archivo,campo,cat in FUENTES:

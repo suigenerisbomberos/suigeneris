@@ -1772,7 +1772,8 @@ const CAL_CATS={
   monumentos:{l:'Monumentos y museos', c:'#8B5E3C'},
   mercados:{l:'Mercados', c:'#14b8a6'},
   colegios:{l:'Colegios', c:'#f59e0b'},
-  consulados:{l:'Consulados', c:'#1e3a8a'}
+  consulados:{l:'Consulados', c:'#1e3a8a'},
+  bibliotecas:{l:'Bibliotecas', c:'#e11d48'}
 };
 let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='';
 async function calCargarPuntos(){ if(calPuntos) return; try{ const r=await fetch('callejero/data/cal_puntos.json'); calPuntos=await r.json(); }catch(e){ calPuntos=[]; } }
