@@ -4,17 +4,19 @@ FOLDER="/Users/josecarlos/Desktop/ACADEMIA/CALLEJERO/CALLEJERO PARA PLATAFORMA/P
 CACHE="/private/tmp/claude-501/-Users-josecarlos/94dd0558-d88d-45a3-b9de-098330d09584/scratchpad/geocache.json"
 
 cache=json.load(open(CACHE,encoding='utf-8')) if os.path.exists(CACHE) else {}
+def _enmalaga(c): return bool(c) and 36.58<c[0]<36.85 and -4.70<c[1]<-4.25
 def geocode(q):
     if not q or not q.strip(): return None
-    if q in cache: return cache[q]
-    url="https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=es&q="+urllib.parse.quote(q)
-    try:
-        req=urllib.request.Request(url, headers={'User-Agent':'SuiGenerisCallejero/1.0 (educativo)'})
-        d=json.load(urllib.request.urlopen(req, timeout=25))
-        res=[round(float(d[0]['lat']),6), round(float(d[0]['lon']),6)] if d else None
-    except Exception: res=None
-    cache[q]=res; json.dump(cache, open(CACHE,'w',encoding='utf-8')); time.sleep(1.1)
-    return res
+    if q in cache: res=cache[q]
+    else:
+        url="https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=es&q="+urllib.parse.quote(q)
+        try:
+            req=urllib.request.Request(url, headers={'User-Agent':'SuiGenerisCallejero/1.0 (educativo)'})
+            d=json.load(urllib.request.urlopen(req, timeout=25))
+            res=[round(float(d[0]['lat']),6), round(float(d[0]['lon']),6)] if d else None
+        except Exception: res=None
+        cache[q]=res; json.dump(cache, open(CACHE,'w',encoding='utf-8')); time.sleep(1.1)
+    return res if _enmalaga(res) else None   # candado: fuera de Málaga = no vale
 
 HEAD={'nombres','nombre','direccion','dirección','situación','situacion','ubicación','ubicacion','ficha nombre','sui generis','nombre '}
 def es_vaga(d):
@@ -38,22 +40,42 @@ def entradas(path):
         for l in pg.get_text().split('\n'):
             l=l.strip()
             if l and l.lower() not in HEAD: lines.append(l)
-    out=[]; i=0
-    while i<len(lines):
-        li=lines[i]
-        m=re.match(r'^(\d+)\s+(.+)$', li)
-        if m and len(m.group(2))>2:  # formato A: "N Nombre" y dirección debajo
-            nombre=re.sub(r'\s*\(\d+\)\s*$','',m.group(2)).strip(' .')
-            direccion=''
-            if i+1<len(lines) and not re.match(r'^\d+(\s|$)', lines[i+1]): direccion=lines[i+1].strip(); i+=1
-            out.append((nombre,direccion)); i+=1; continue
-        if re.match(r'^\d+$', li):  # formato B: número solo → nombre y luego dirección
-            nombre=lines[i+1].strip(' .') if i+1<len(lines) and not re.match(r'^\d+$',lines[i+1]) else ''
-            direccion=lines[i+2].strip() if i+2<len(lines) and not re.match(r'^\d+$',lines[i+2]) else ''
-            if nombre: out.append((re.sub(r'\s*\(\d+\)\s*$','',nombre), direccion))
-            i+=3; continue
-        i+=1
-    if not out:  # formato C: sin números, pares nombre/dirección alternos
+    # Detecta el formato del PDF
+    barenums=sum(1 for l in lines if re.match(r'^\d+\s*$', l))
+    numtext =sum(1 for l in lines if re.match(r'^\d+\s+\S', l))
+    out=[]
+    if barenums>=3 and barenums>=numtext*0.5:
+        # MODO número-solo: cada ficha empieza por un número en su propia línea.
+        # El bloque llega hasta el SIGUIENTE número-solo (así "5 Estrellas", que
+        # empieza por dígito, NO corta la ficha; es contenido, no ficha nueva).
+        i=0
+        while i<len(lines):
+            if not re.match(r'^\d+\s*$', lines[i]): i+=1; continue
+            j=i+1; blk=[]
+            while j<len(lines) and not re.match(r'^\d+\s*$', lines[j]): blk.append(lines[j].strip()); j+=1
+            popped=False
+            while blk and blk[-1].lower() in ('málaga','malaga'): blk.pop(); popped=True
+            if popped and len(blk)>=3:        # tipo / nombre / dirección
+                nombre=(blk[0]+' '+blk[1]).strip(); direccion=blk[2]
+            elif len(blk)>=2:                 # nombre / dirección (+extra ignorado)
+                nombre=blk[0]; direccion=blk[1]
+            elif len(blk)==1:
+                nombre=blk[0]; direccion=''
+            else: nombre=''; direccion=''
+            if nombre: out.append((re.sub(r'\s*\(\d+\)\s*$','',nombre.strip(' .')), direccion))
+            i=j
+    elif numtext>=3:
+        # MODO formato A: "N Nombre" y la dirección en la línea siguiente
+        i=0
+        while i<len(lines):
+            m=re.match(r'^(\d+)\s+(.+)$', lines[i])
+            if m and len(m.group(2))>2:
+                nombre=re.sub(r'\s*\(\d+\)\s*$','',m.group(2)).strip(' .'); direccion=''
+                if i+1<len(lines) and not re.match(r'^\d+(\s|$)', lines[i+1]): direccion=lines[i+1].strip(); i+=1
+                out.append((nombre,direccion))
+            i+=1
+    else:
+        # MODO C: sin números, pares nombre/dirección alternos
         def addr_like(l):
             ll=l.lower().strip()
             if re.match(r'^(c/|cl\b|av\b|avda|avenida|calle|plaza|pl\b|paseo|camino|ctra|carretera|urb)', ll): return True
@@ -62,8 +84,7 @@ def entradas(path):
         for l in lines:
             if addr_like(l):
                 if prev: out.append((prev.strip(' .'), l.strip())); prev=None
-            else:
-                prev=l
+            else: prev=l
     return out
 
 def geo_entry(nom, d):
@@ -115,7 +136,7 @@ for fn,slug,label,color in FILES:
         if not nom: continue
         c=geo_entry(nom,d)
         if not c: miss.append(nom); continue
-        pts.append({'n':nom,'cat':slug,'lat':c[0],'lng':c[1],'calle':(d or '').strip(),'src':'pdf'})
+        pts.append({'n':nom,'cat':slug,'lat':c[0],'lng':c[1],'calle':(limpia(d) if d else ''),'src':'pdf'})
         ok+=1
     resumen.append((label,fn,len(ent),ok))
     print(f"{label}: {ok}/{len(ent)}", flush=True)
