@@ -1418,12 +1418,14 @@ async function calCargarBarrios(){
     calBarriosCargado=true;
   }catch(e){ console.warn('barrios callejero', e); }
 }
+const CAL_DIST_COLORS={1:'#ef4444',2:'#f97316',3:'#eab308',4:'#22c55e',5:'#14b8a6',6:'#0ea5e9',7:'#6366f1',8:'#a855f7',9:'#ec4899',10:'#84cc16',11:'#78716c'};
 function calBarrioStyle(feature){
   const num=feature.getProperty('num');
-  if(calBarrioSel===num) return {fillColor:'#00e5ff', fillOpacity:0.5, strokeColor:'#00bcd4', strokeWeight:2, zIndex:5};
+  if(calBarrioSel===num) return {fillColor:'#00e5ff', fillOpacity:0.55, strokeColor:'#00bcd4', strokeWeight:2, zIndex:5};
   if(calDistrito && feature.getProperty('d')!==calDistrito)
     return {fillColor:'#64748b', fillOpacity:0.03, strokeColor:'#64748b', strokeWeight:0.5, zIndex:2};
-  return {fillColor:'#D4500A', fillOpacity:0.12, strokeColor:'#ff7d33', strokeWeight:1, zIndex:3};
+  const dc=CAL_DIST_COLORS[feature.getProperty('d')]||'#D4500A';
+  return {fillColor:dc, fillOpacity:0.38, strokeColor:dc, strokeWeight:1, zIndex:3};
 }
 function calListaBarrios(){ return calDistrito!=null ? calBarrios.filter(b=>b.d===calDistrito) : calBarrios; }
 function calClickBarrio(ev){
@@ -1465,7 +1467,10 @@ function calBarriosMenu(){
   if(calBarriosLayer) calBarriosLayer.setStyle(calBarrioStyle);
   if(calMap) calMap.data.setStyle(calEstiloVia);
   const b=(fn,txt)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${txt}</button>`;
+  const ley=(calDistritos||[]).map(d=>`<span style="font-size:10px;color:var(--text2);white-space:nowrap"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${CAL_DIST_COLORS[d.num]||'#888'};margin-right:3px;vertical-align:middle"></span>${_capNom(d.nombre)}</span>`).join(' ');
   calSetInfo(`<div class="cal-ficha">
+    <div style="font-size:13px;color:var(--text2);margin-bottom:4px">Cada <b>distrito</b> tiene un color:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">${ley}</div>
     <div style="font-size:13px;color:var(--text2);margin-bottom:6px">Toca un barrio para ver su nombre, o elige:</div>
     ${b('calBarrioPregunta','❓ ¿Qué barrio es el resaltado?')}
     ${b('calBarrioDeCalle','📍 ¿En qué barrio está una calle?')}
