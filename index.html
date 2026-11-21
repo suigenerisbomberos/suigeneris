@@ -1425,7 +1425,7 @@ function calBarrioStyle(feature){
   if(calDistrito && feature.getProperty('d')!==calDistrito)
     return {fillColor:'#64748b', fillOpacity:0.03, strokeColor:'#64748b', strokeWeight:0.5, zIndex:2};
   const dc=CAL_DIST_COLORS[feature.getProperty('d')]||'#D4500A';
-  return {fillColor:dc, fillOpacity:0.38, strokeColor:dc, strokeWeight:1, zIndex:3};
+  return {fillColor:dc, fillOpacity:0.35, strokeColor:'#ffffff', strokeOpacity:0.95, strokeWeight:1.6, zIndex:3};
 }
 function calListaBarrios(){ return calDistrito!=null ? calBarrios.filter(b=>b.d===calDistrito) : calBarrios; }
 function calClickBarrio(ev){
