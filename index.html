@@ -1087,7 +1087,7 @@ async function calInit(){
     });
     // Cartel de info DENTRO del mapa (para que se vea a pantalla completa)
     calInfoBox=document.createElement('div');
-    calInfoBox.style.cssText='margin:10px;max-width:320px;max-height:44vh;overflow-y:auto;font-size:12px;box-sizing:border-box';
+    calInfoBox.style.cssText='margin:10px;width:min(620px,90vw);max-height:38vh;overflow-y:auto;font-size:12px;box-sizing:border-box';
     calMap.controls[google.maps.ControlPosition.BOTTOM_CENTER].push(calInfoBox);
     // Al entrar/salir de pantalla completa, recolocar el panel (dentro/fuera del mapa)
     document.addEventListener('fullscreenchange', ()=>calSetInfo(calInfoHtml));
