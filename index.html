@@ -1063,13 +1063,19 @@ function calSetInfo(html){
 }
 
 function calCargarMaps(){
-  if(window.google&&window.google.maps) return Promise.resolve();
+  if(window.google&&window.google.maps&&window.markerClusterer) return Promise.resolve();
   if(_calMapsP) return _calMapsP;
   _calMapsP=new Promise((res,rej)=>{
+    let pend=2; const done=()=>{ if(--pend===0) res(); };
     const s=document.createElement('script');
     s.src=`https://maps.googleapis.com/maps/api/js?key=${CAL_MAPS_KEY}&language=es&region=ES`;
-    s.async=true; s.onload=()=>res(); s.onerror=()=>rej(new Error('maps'));
+    s.async=true; s.onload=done; s.onerror=()=>rej(new Error('maps'));
     document.head.appendChild(s);
+    // Librería de agrupado de puntos (si falla, seguimos sin agrupar)
+    const c=document.createElement('script');
+    c.src='https://cdn.jsdelivr.net/npm/@googlemaps/markerclusterer@2.5.3/dist/index.min.js';
+    c.async=true; c.onload=done; c.onerror=done;
+    document.head.appendChild(c);
   });
   return _calMapsP;
 }
@@ -1774,7 +1780,7 @@ function calOrdenRender(){
 
 // ===== FASE 4 — PUNTOS DE INTERÉS =====
 let CAL_CATS={ bomberos:{l:'Parques de bomberos', c:'#dc2626'} }; // se completa desde cal_categorias.json
-let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='', calPuntoCats=null;
+let calPuntos=null, calPuntosMarkers=[], calPuntoSelIdx=-1, calPuntoAct='estudiar', calPuntoObj=null, calPuntoOpts=[], calPuntoCorrecto='', calPuntoCats=null, calCluster=null, _calPrevSel=-1;
 function calPuntosActivos(){ return calPuntos ? calPuntos.filter(p=>!calPuntoCats || calPuntoCats.has(p.cat)) : []; }
 async function calCargarPuntos(){
   if(calPuntos) return;
@@ -1783,7 +1789,17 @@ async function calCargarPuntos(){
 }
 function _puntoIcon(cat,sel){ const c=(CAL_CATS[cat]||{}).c||'#888'; return {path:google.maps.SymbolPath.CIRCLE, scale:sel?10:6, fillColor:c, fillOpacity:1, strokeColor:sel?'#00e5ff':'#ffffff', strokeWeight:sel?4:1.5}; }
 function calCrearMarcadoresPuntos(){ if(calPuntosMarkers.length||!calPuntos) return; calPuntos.forEach((p,i)=>{ const m=new google.maps.Marker({position:{lat:p.lat,lng:p.lng}, icon:_puntoIcon(p.cat,false), title:p.n}); m.addListener('click',()=>calPuntoClick(i)); calPuntosMarkers.push(m); }); }
-function calMostrarPuntos(ver){ calPuntosMarkers.forEach((m,i)=>{ const on=ver && (!calPuntoCats || calPuntoCats.has(calPuntos[i].cat)); m.setMap(on?calMap:null); }); }
+function calMostrarPuntos(ver){
+  if(!calPuntos) return;
+  const act = ver ? calPuntosMarkers.filter((m,i)=>!calPuntoCats || calPuntoCats.has(calPuntos[i].cat)) : [];
+  if(window.markerClusterer){
+    if(!calCluster) calCluster=new markerClusterer.MarkerClusterer({map:calMap});
+    calCluster.clearMarkers();
+    if(act.length) calCluster.addMarkers(act);
+  } else {
+    const on=new Set(act); calPuntosMarkers.forEach(m=>m.setMap(on.has(m)?calMap:null));
+  }
+}
 function _puntoChips(){
   const cats=[...new Set(calPuntos.map(p=>p.cat))];
   const chip=(cat)=>{ const x=CAL_CATS[cat]||{l:cat,c:'#888'}; const on=!calPuntoCats||calPuntoCats.has(cat);
@@ -1796,7 +1812,11 @@ function _puntoChips(){
 window.calTogglePuntoCat=(cat)=>{ if(!calPuntoCats) calPuntoCats=new Set(calPuntos.map(p=>p.cat)); if(calPuntoCats.has(cat)) calPuntoCats.delete(cat); else calPuntoCats.add(cat); calMostrarPuntos(true); calPuntosMenu(); };
 window.calPuntoTodos=()=>{ calPuntoCats=new Set(calPuntos.map(p=>p.cat)); calMostrarPuntos(true); calPuntosMenu(); };
 window.calPuntoNinguno=()=>{ calPuntoCats=new Set(); calMostrarPuntos(true); calPuntosMenu(); };
-function _repintarPuntos(){ calPuntosMarkers.forEach((m,i)=>m.setIcon(_puntoIcon(calPuntos[i].cat, i===calPuntoSelIdx))); }
+function _repintarPuntos(){
+  if(_calPrevSel>=0 && calPuntos[_calPrevSel]) calPuntosMarkers[_calPrevSel].setIcon(_puntoIcon(calPuntos[_calPrevSel].cat,false));
+  if(calPuntoSelIdx>=0 && calPuntos[calPuntoSelIdx]) calPuntosMarkers[calPuntoSelIdx].setIcon(_puntoIcon(calPuntos[calPuntoSelIdx].cat,true));
+  _calPrevSel=calPuntoSelIdx;
+}
 function _puntoLeyenda(){ return '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:6px 0">'+Object.values(CAL_CATS).map(x=>`<span style="font-size:11px;color:var(--text2)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${x.c};margin-right:3px;vertical-align:middle"></span>${x.l}</span>`).join('')+'</div>'; }
 function calPuntosMenu(){ calPuntoSelIdx=-1; _repintarPuntos(); const b=(fn,t)=>`<button class="btn-sm" style="display:block;width:100%;text-align:left;margin:4px 0;background:rgba(255,255,255,0.08);color:#f1f5f9" onclick="${fn}()">${t}</button>`; calSetInfo(`<div class="cal-ficha"><div style="font-size:13px;color:var(--text2);margin-bottom:2px">Elige qué estudiar (toca para filtrar):</div>${_puntoChips()}<div style="font-size:12px;color:var(--text3);margin:4px 0">Toca un punto del mapa para ver qué es, o:</div>${b('calPuntoCalle','📍 ¿En qué calle está…?')}${b('calPuntoQue','❓ ¿Qué punto es el resaltado?')}</div>`); }
 window.calPuntosMenu=calPuntosMenu;
