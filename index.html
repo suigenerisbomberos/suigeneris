@@ -1793,7 +1793,7 @@ function calMostrarPuntos(ver){
   if(!calPuntos) return;
   const act = ver ? calPuntosMarkers.filter((m,i)=>!calPuntoCats || calPuntoCats.has(calPuntos[i].cat)) : [];
   if(window.markerClusterer){
-    if(!calCluster) calCluster=new markerClusterer.MarkerClusterer({map:calMap});
+    if(!calCluster) calCluster=new markerClusterer.MarkerClusterer({map:calMap, algorithm:new markerClusterer.SuperClusterAlgorithm({radius:55, maxZoom:12})});
     calCluster.clearMarkers();
     if(act.length) calCluster.addMarkers(act);
   } else {
